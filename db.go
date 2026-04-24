@@ -30,7 +30,6 @@ func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, e
 	tableName := cfg.QueriedDbTable
 
 	var rows *sql.Rows
-	var err error
 
 	if len(imageVector) > 0 {
 		vectorBytes, _ := json.Marshal(imageVector)
