@@ -4,7 +4,9 @@ go 1.23.0
 
 require (
 	cloud.google.com/go/storage v1.43.0
+	github.com/corona10/goimagehash v1.1.0
 	github.com/gen2brain/webp v0.5.5
+	github.com/lib/pq v1.12.3
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	golang.org/x/image v0.19.0
 )
@@ -25,6 +27,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.5 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.49.0 // indirect

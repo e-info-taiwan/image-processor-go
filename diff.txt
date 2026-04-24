@@ -1,0 +1,258 @@
+Only in /Users/hcchien/e-info/image-processor: .DS_Store
+Only in /Users/hcchien/e-info/image-processor: .dockerignore
+diff -ur --exclude=.git /Users/hcchien/reviz/image-processor/.gitignore /Users/hcchien/e-info/image-processor/.gitignore
+--- /Users/hcchien/reviz/image-processor/.gitignore	2026-04-16 23:27:04
++++ /Users/hcchien/e-info/image-processor/.gitignore	2026-04-03 12:01:33
+@@ -1,2 +1,12 @@
+-image-processor
+-coverage.out
++# created by virtualenv automatically
++__pycache__
++bin
++lib
++msg-sample.txt
++test.py
++pillow.py
++subscribe.py
++pyvenv.cfg
++photo
++*.jpeg
++*.json
+diff -ur --exclude=.git /Users/hcchien/reviz/image-processor/Dockerfile /Users/hcchien/e-info/image-processor/Dockerfile
+--- /Users/hcchien/reviz/image-processor/Dockerfile	2026-04-17 09:14:49
++++ /Users/hcchien/e-info/image-processor/Dockerfile	2026-04-03 12:01:33
+@@ -1,15 +1,14 @@
+-FROM golang:1.23 AS builder
++FROM python:3.9-slim
+ 
+-WORKDIR /src
+-COPY go.mod ./
+-RUN go mod download
++RUN addgroup user && adduser -h /home/user -D user -G user -s /bin/sh
+ 
+-COPY . .
+-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/image-processor .
++COPY .  /usr/src/app/image_processor
++WORKDIR  /usr/src/app/image_processor
+ 
+-FROM gcr.io/distroless/base-debian12
+-WORKDIR /app
+-COPY --from=builder /out/image-processor /image-processor
++RUN apt-get update \
++    && apt-get install -y gcc libc-dev libxslt-dev libxml2 libpq-dev \
++    && pip install --upgrade pip \
++    && pip install -r requirements.txt
+ 
+ EXPOSE 8080
+-ENTRYPOINT ["/image-processor"]
++CMD ["/usr/local/bin/uwsgi", "--ini", "server.ini"]
+\ No newline at end of file
+Only in /Users/hcchien/reviz/image-processor: LICENSE
+diff -ur --exclude=.git /Users/hcchien/reviz/image-processor/README.md /Users/hcchien/e-info/image-processor/README.md
+--- /Users/hcchien/reviz/image-processor/README.md	2026-04-20 16:14:00
++++ /Users/hcchien/e-info/image-processor/README.md	2026-04-24 12:46:07
+@@ -1,67 +1,49 @@
+-# Go Image Processor
++# Image Processor
+ 
+-這個版本用 Go 重新實作原本 Python `image-processor` 的核心能力：
++This is the background service responsible for resizing uploaded images, adding watermarks, and calculating image similarity data for deduplication.
+ 
+-- 接收 GCS object create event
+-- 從 GCS 下載原圖並產出多組 resize 圖
+-- 上傳原尺寸 `.webP`、resize 後的原格式檔與 resize 後的 `.webP`
+-- 透過 env variables 決定是否加上 watermark
++## Features
+ 
+-## Event 格式
++- **Image Resizing**: Generates multiple sizes of an uploaded image (e.g., w480, w800, w1200, etc.) and saves them to Google Cloud Storage.
++- **Watermarking**: Applies watermarks conditionally based on image orientation and settings.
++- **Perceptual Hashing (pHash)**: Calculates a 64-bit perceptual hash (pHash) for each image to quickly identify visually identical or highly similar images.
++- **AI Vector Embeddings (CLIP)**: Uses the `clip-ViT-B-32` model from `sentence-transformers` to compute a 512-dimensional vector representing the semantic meaning of the image. This allows for advanced AI-based image similarity searches.
+ 
+-服務會接受兩種常見 payload：
++## Image Similarity Detection (pHash & Vector)
+ 
+-1. 直接的 GCS event JSON
+-2. Pub/Sub push envelope，`message.data` 內是 base64 編碼的 GCS event
++When an image is processed (specifically when generating the `w480` size), the processor extracts EXIF data, calculates a pHash, and optionally computes an AI vector embedding. These values are then written back to the CMS PostgreSQL database directly.
+ 
+-HTTP endpoint:
++### Environment Variables
+ 
+-- `POST /image_processor`
+-- `GET /`
+-- `GET /healthz`
++You can configure the service behavior using the following environment variables:
+ 
+-## 環境變數
++#### Image Vector & AI Toggle
++- `ENABLE_IMAGE_VECTOR` (Default: `false`)
++  - Set this to `true` to enable the AI vector generation using the `clip-ViT-B-32` model.
++  - **Important Database Requirement**: If enabled, your CMS database target table (e.g., `Photo`) **MUST** have an `imageVector` column of type `vector` (via the `pgvector` extension). If the column is missing, the SQL update will crash.
++  - **Memory Requirement**: Loading the `clip-ViT-B-32` model consumes approximately 1GB~1.5GB of RAM per worker. If enabled, ensure your deployment environment (e.g., Cloud Run or VM) has sufficient memory (recommended: 8GB - 16GB, depending on your uWSGI worker settings).
+ 
+-- `PORT`: 預設 `8080`
+-- `RESIZE_TARGETS`: 例如 `w480,w800,w1200,w1600,w2400`
+-- `ENABLE_WATERMARK`: `true` 或 `false`
+-- `WATERMARK_PATH`: watermark 圖檔本機路徑；當 `ENABLE_WATERMARK=true` 時必填
+-- `WATERMARK_SCALE`: watermark 寬度相對於輸出圖寬度的比例，預設 `0.15`
+-- `WATERMARK_MARGIN_RATIO`: watermark 與邊界距離比例，預設 `0.025`
+-- `WATERMARK_OPACITY`: `0` 到 `1`，預設 `1.0`
+-- `CACHE_CONTROL`: 上傳到 GCS 時寫入的 cache control，預設 `public, max-age=31536000`
++#### Database Connection (for writing similarity data)
++- `DB_HOST`: PostgreSQL database host (Default: `localhost`)
++- `DB_NAME`: Database name (Default: `postgres`)
++- `DB_USER`: Database user (Default: `postgres`)
++- `DB_PASSWORD`: Database password
++- `QUERIED_DB_TABLE`: The name of the table to update in the DB (Default: `Photo`)
+ 
+-## 本機執行
++#### General Service Configurations
++- `PROJECT`: The project identifier used for watermarks (e.g., `mirrormedia`)
++- `PROJECT_ID`: GCP project ID
++- `RESIZE_TARGETS`: Comma-separated list of sizes (e.g., `w480,w800,w1200,w1600,w2400`)
+ 
+-```bash
+-go run .
+-```
++## API Endpoints
+ 
+-如果要本機測試並啟用 watermark：
++- `POST /image_processor`: Main endpoint triggered by Pub/Sub for image processing.
++- `POST /batch_backfill_phash`: An administrative endpoint to trigger a background job to backfill pHash and vectors for existing images in the DB that are missing them.
++- `POST /recreate`: Endpoint for cronjobs to recreate missing image sizes.
++- `GET /`: Healthcheck endpoint.
+ 
+-```bash
+-ENABLE_WATERMARK=true \
+-WATERMARK_PATH=./static/watermark.png \
+-RESIZE_TARGETS=w480,w800,w1200 \
+-go run .
+-```
++## Performance Tuning
+ 
+-## 部署
+-
+-這個服務適合部署到 Cloud Run，並搭配：
+-
+-- Eventarc 直接轉 GCS finalized event 到 HTTP
+-- 或 Pub/Sub push subscription 導到 `/image_processor`
+-
+-若使用 Cloud Run，請確保執行身份有：
+-
+-- `roles/storage.objectViewer`
+-- `roles/storage.objectCreator`
+-
+-## 行為說明
+-
+-- 只處理副檔名為 `jpg`、`jpeg`、`png`、`gif`、`tif`、`tiff`、`webp`
+-- 會略過系統產生的混合大小寫 `.webP`，避免重複處理
+-- 已經帶有 `-w###` 的檔名會直接略過，避免無限遞迴
+-- 每個 resize target 會輸出原副檔名版本，例如 `images/foo-w800.jpg`
+-- 每個 resize target 也會輸出 WebP 版本，例如 `images/foo-w800.webP`
++If you enable `ENABLE_IMAGE_VECTOR=true`, be mindful of the `server.ini` uWSGI configuration. The `clip-ViT-B-32` model is loaded once per worker process.
++- To reduce memory footprint, lower the `processes` and `cheaper-initial` values in `server.ini`.
++- You may also need to increase the `reload-on-rss` limit (e.g., to `3072` MB) so workers aren't killed while processing heavy images with the AI model loaded.
+Only in /Users/hcchien/e-info/image-processor: __pycache__
+diff -ur --exclude=.git /Users/hcchien/reviz/image-processor/cloudbuild.yaml /Users/hcchien/e-info/image-processor/cloudbuild.yaml
+--- /Users/hcchien/reviz/image-processor/cloudbuild.yaml	2026-04-17 08:19:05
++++ /Users/hcchien/e-info/image-processor/cloudbuild.yaml	2026-04-03 12:01:33
+@@ -1,50 +1,44 @@
+ steps:
++  - name: gcr.io/cloud-builders/gsutil
++    args:
++      - cp
++      - gs://e-info-service-configs/image-processor/dev/gcskeyfile.json
++      - ./gcskeyfile.json
+   - name: gcr.io/cloud-builders/docker
+-    id: Build
+     args:
+       - build
+-      - -t
+-      - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+-      - -f
+-      - Dockerfile
++      - '--no-cache'
++      - '-t'
++      - '$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
+       - .
+-
++      - '-f'
++      - Dockerfile
++    id: Build
+   - name: gcr.io/cloud-builders/docker
+-    id: Push
+     args:
+       - push
+-      - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+-
+-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+-    id: Deploy
+-    entrypoint: gcloud
++      - '$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
++    id: Push
++  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+     args:
+       - run
+-      - deploy
+-      - ${_SERVICE_NAME}
+-      - --platform=${_PLATFORM}
+-      - --region=${_DEPLOY_REGION}
+-      - --image=${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+-      - --port=8080
+-      - --quiet
+-      - --labels=managed-by=cloud-build,commit-sha=${COMMIT_SHA},build-id=${BUILD_ID},trigger-id=${_TRIGGER_ID}
+-
++      - services
++      - update
++      - $_SERVICE_NAME
++      - '--platform=managed'
++      - '--image=$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
++      - >-
++        --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID,$_LABELS
++      - '--region=$_DEPLOY_REGION'
++      - '--quiet'
++    id: Deploy
++    entrypoint: gcloud
+ images:
+-  - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+-
+-substitutions:
+-  _AR_HOSTNAME: asia-east1-docker.pkg.dev
+-  _AR_REPOSITORY: cloud-run-source-deploy
+-  _SERVICE_NAME: image-processor
+-  _DEPLOY_REGION: asia-east1
+-  _PLATFORM: managed
+-  _TRIGGER_ID: manual
+-
++  - '$_GCR_HOSTNAME/$PROJECT_ID/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
+ options:
+-  logging: CLOUD_LOGGING_ONLY
+   substitutionOption: ALLOW_LOOSE
+-
++  logging: CLOUD_LOGGING_ONLY
+ tags:
++  - gcp-cloud-build-deploy-cloud-run
++  - gcp-cloud-build-deploy-cloud-run-managed
+   - image-processor
+-  - cloud-run
+-  - go
+Only in /Users/hcchien/reviz/image-processor: config.go
+Only in /Users/hcchien/reviz/image-processor: config_test.go
+Only in /Users/hcchien/e-info/image-processor: configs.py
+Only in /Users/hcchien/reviz/image-processor: diff.txt
+Only in /Users/hcchien/reviz/image-processor: go.mod
+Only in /Users/hcchien/reviz/image-processor: go.sum
+Only in /Users/hcchien/reviz/image-processor: main.go
+Only in /Users/hcchien/e-info/image-processor: phash_utils.py
+Only in /Users/hcchien/reviz/image-processor: processor.go
+Only in /Users/hcchien/reviz/image-processor: processor_test.go
+Only in /Users/hcchien/e-info/image-processor: publisher.py
+Only in /Users/hcchien/e-info/image-processor: requirements.txt
+Only in /Users/hcchien/e-info/image-processor: resize.py
+Only in /Users/hcchien/e-info/image-processor: server.ini
+Only in /Users/hcchien/e-info/image-processor: server.py
+Only in /Users/hcchien/e-info/image-processor: test_vector_utils.py
+Only in /Users/hcchien/e-info/image-processor: utils
+Only in /Users/hcchien/e-info/image-processor: vector_utils.py

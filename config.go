@@ -16,6 +16,12 @@ type Config struct {
 	WatermarkMarginRatio float64
 	WatermarkOpacity     float64
 	CacheControl         string
+	EnableImageVector    bool
+	DbHost               string
+	DbName               string
+	DbUser               string
+	DbPassword           string
+	QueriedDbTable       string
 }
 
 type ResizeTarget struct {
@@ -38,6 +44,12 @@ func LoadConfig() (Config, error) {
 		WatermarkMarginRatio: parseFloatEnv("WATERMARK_MARGIN_RATIO", 0.025),
 		WatermarkOpacity:     parseFloatEnv("WATERMARK_OPACITY", 1.0),
 		CacheControl:         envOrDefault("CACHE_CONTROL", "public, max-age=31536000"),
+		EnableImageVector:    parseBoolEnv("ENABLE_IMAGE_VECTOR", false),
+		DbHost:               envOrDefault("DB_HOST", "localhost"),
+		DbName:               envOrDefault("DB_NAME", "postgres"),
+		DbUser:               envOrDefault("DB_USER", "postgres"),
+		DbPassword:           os.Getenv("DB_PASSWORD"),
+		QueriedDbTable:       envOrDefault("QUERIED_DB_TABLE", "Photo"),
 	}
 
 	if cfg.EnableWatermark && cfg.WatermarkPath == "" {

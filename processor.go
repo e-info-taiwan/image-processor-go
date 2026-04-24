@@ -17,10 +17,12 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
+	"github.com/corona10/goimagehash"
 	webp "github.com/gen2brain/webp"
 	exifpkg "github.com/rwcarlsen/goexif/exif"
+	"github.com/rwcarlsen/goexif/tiff"
 	xdraw "golang.org/x/image/draw"
-	"golang.org/x/image/tiff"
+	xtiff "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 )
 
@@ -78,6 +80,7 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		return fmt.Errorf("decode image: %w", err)
 	}
 	sourceImg = applyEXIFOrientation(sourceImg, originalBytes)
+	exifMap := extractAllEXIF(originalBytes)
 
 	base := filepath.Base(event.Name)
 	ext := filepath.Ext(base)
@@ -115,6 +118,41 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		}
 		if err := p.uploadObject(ctx, event.Bucket, webpObjectName, "image/webp", webpBytes); err != nil {
 			return err
+		}
+
+		// Background task: Calculate pHash and Vector, then update DB when resize target is w480
+		if target.Label == "w480" {
+			go func() {
+				// Compute pHash
+				hash, err := goimagehash.PerceptionHash(resized)
+				var phashStr string
+				if err != nil {
+					log.Printf("failed to compute phash for %s: %v", event.Name, err)
+				} else {
+					phashStr = fmt.Sprintf("%016x", hash.GetHash())
+				}
+
+				// Compute Vector
+				var imgVector []float64
+				if p.cfg.EnableImageVector {
+					vec, err := ComputeImageVector(mainBytes)
+					if err != nil {
+						log.Printf("failed to compute image vector for %s: %v", event.Name, err)
+					} else {
+						imgVector = vec
+					}
+				}
+
+				// Extract imageFile_id
+				imageFileID := nameWithoutExt
+
+				// Update DB
+				if phashStr != "" {
+					if err := UpdateImageMetadata(p.cfg, imageFileID, phashStr, event.Bucket, exifMap, imgVector); err != nil {
+						log.Printf("failed to update image metadata for %s: %v", event.Name, err)
+					}
+				}
+			}()
 		}
 	}
 
@@ -237,7 +275,7 @@ func encodeByExt(img image.Image, ext string) ([]byte, error) {
 			return nil, err
 		}
 	case ".tif", ".tiff":
-		if err := tiff.Encode(&buf, img, nil); err != nil {
+		if err := xtiff.Encode(&buf, img, nil); err != nil {
 			return nil, err
 		}
 	case ".webp":
@@ -278,6 +316,25 @@ func exifOrientation(data []byte) int {
 		return 1
 	}
 	return orientation
+}
+
+type exifWalker struct {
+	Data map[string]interface{}
+}
+
+func (w *exifWalker) Walk(name exifpkg.FieldName, tag *tiff.Tag) error {
+	w.Data[string(name)] = tag.String()
+	return nil
+}
+
+func extractAllEXIF(data []byte) map[string]interface{} {
+	exifData, err := exifpkg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	walker := &exifWalker{Data: make(map[string]interface{})}
+	exifData.Walk(walker)
+	return walker.Data
 }
 
 func rotate180(src image.Image) *image.NRGBA {

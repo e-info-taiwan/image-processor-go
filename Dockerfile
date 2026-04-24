@@ -7,9 +7,19 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/image-processor .
 
-FROM gcr.io/distroless/base-debian12
+FROM python:3.11-slim
 WORKDIR /app
-COPY --from=builder /out/image-processor /image-processor
+
+# Install dependencies for Python sidecar
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Go binary
+COPY --from=builder /out/image-processor /app/image-processor
+
+# Copy Python sidecar and entrypoint
+COPY vector_server.py entrypoint.sh ./
+RUN chmod +x entrypoint.sh
 
 EXPOSE 8080
-ENTRYPOINT ["/image-processor"]
+ENTRYPOINT ["/app/entrypoint.sh"]
