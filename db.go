@@ -44,7 +44,7 @@ func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, e
 	}
 	defer rows.Close()
 
-	var duplicates []Duplicate
+	duplicates := []Duplicate{}
 	for rows.Next() {
 		var id, recFileID sql.NullString
 		var recExt sql.NullString
