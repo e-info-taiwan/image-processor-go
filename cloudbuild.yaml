@@ -26,6 +26,9 @@ steps:
       - --region=${_DEPLOY_REGION}
       - --image=${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
       - --port=8080
+      - --memory=4Gi
+      - --cpu=2
+      - --no-cpu-throttling
       - --quiet
       - --labels=managed-by=cloud-build,commit-sha=${COMMIT_SHA},build-id=${BUILD_ID},trigger-id=${_TRIGGER_ID}
 
