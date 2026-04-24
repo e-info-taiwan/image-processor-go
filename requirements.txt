@@ -1,6 +1,7 @@
 fastapi==0.103.2
 uvicorn==0.23.2
 sentence-transformers==2.2.2
+transformers<4.38.0
 Pillow==10.0.1
 torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
 numpy<2
