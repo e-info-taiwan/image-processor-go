@@ -8,20 +8,21 @@ import (
 )
 
 type Config struct {
-	Port                 string
-	ResizeTargets        []ResizeTarget
-	EnableWatermark      bool
-	WatermarkPath        string
-	WatermarkScale       float64
-	WatermarkMarginRatio float64
-	WatermarkOpacity     float64
-	CacheControl         string
-	EnableImageVector    bool
-	DbHost               string
-	DbName               string
-	DbUser               string
-	DbPassword           string
-	QueriedDbTable       string
+	Port                   string
+	ResizeTargets          []ResizeTarget
+	EnableWatermark        bool
+	WatermarkPath          string
+	WatermarkScale         float64
+	WatermarkMarginRatio   float64
+	WatermarkOpacity       float64
+	CacheControl           string
+	EnableImageVector      bool
+	DbHost                 string
+	DbName                 string
+	DbUser                 string
+	DbPassword             string
+	QueriedDbTable         string
+	DuplicateCosineDistance float64
 }
 
 type ResizeTarget struct {
@@ -36,20 +37,21 @@ func LoadConfig() (Config, error) {
 	}
 
 	cfg := Config{
-		Port:                 envOrDefault("PORT", "8080"),
-		ResizeTargets:        targets,
-		EnableWatermark:      parseBoolEnv("ENABLE_WATERMARK", false),
-		WatermarkPath:        os.Getenv("WATERMARK_PATH"),
-		WatermarkScale:       parseFloatEnv("WATERMARK_SCALE", 0.15),
-		WatermarkMarginRatio: parseFloatEnv("WATERMARK_MARGIN_RATIO", 0.025),
-		WatermarkOpacity:     parseFloatEnv("WATERMARK_OPACITY", 1.0),
-		CacheControl:         envOrDefault("CACHE_CONTROL", "public, max-age=31536000"),
-		EnableImageVector:    parseBoolEnv("ENABLE_IMAGE_VECTOR", false),
-		DbHost:               envOrDefault("DB_HOST", "localhost"),
-		DbName:               envOrDefault("DB_NAME", "postgres"),
-		DbUser:               envOrDefault("DB_USER", "postgres"),
-		DbPassword:           os.Getenv("DB_PASSWORD"),
-		QueriedDbTable:       envOrDefault("QUERIED_DB_TABLE", "Photo"),
+		Port:                   envOrDefault("PORT", "8080"),
+		ResizeTargets:          targets,
+		EnableWatermark:        parseBoolEnv("ENABLE_WATERMARK", false),
+		WatermarkPath:          os.Getenv("WATERMARK_PATH"),
+		WatermarkScale:         parseFloatEnv("WATERMARK_SCALE", 0.15),
+		WatermarkMarginRatio:   parseFloatEnv("WATERMARK_MARGIN_RATIO", 0.025),
+		WatermarkOpacity:       parseFloatEnv("WATERMARK_OPACITY", 1.0),
+		CacheControl:           envOrDefault("CACHE_CONTROL", "public, max-age=31536000"),
+		EnableImageVector:      parseBoolEnv("ENABLE_IMAGE_VECTOR", false),
+		DbHost:                 envOrDefault("DB_HOST", "localhost"),
+		DbName:                 envOrDefault("DB_NAME", "postgres"),
+		DbUser:                 envOrDefault("DB_USER", "postgres"),
+		DbPassword:             os.Getenv("DB_PASSWORD"),
+		QueriedDbTable:         envOrDefault("QUERIED_DB_TABLE", "Photo"),
+		DuplicateCosineDistance: parseFloatEnv("DUPLICATE_COSINE_DISTANCE", 0.15),
 	}
 
 	if cfg.EnableWatermark && cfg.WatermarkPath == "" {

@@ -29,16 +29,36 @@ func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, e
 
 	tableName := cfg.QueriedDbTable
 
-	// 1. Find similar images with Hamming distance <= 5
-	query := fmt.Sprintf(`
-		SELECT id, "imageFile_id", "imageFile_extension" FROM "%s"
-		WHERE phash IS NOT NULL 
-		  AND phash != ''
-		  AND "imageFile_id" != $1
-		  AND bit_count(('x' || phash)::bit(64) # ('x' || $2)::bit(64)) <= 5
-	`, tableName)
+	var rows *sql.Rows
+	var err error
 
-	rows, err := db.Query(query, imageFileID, phashStr)
+	if len(imageVector) > 0 {
+		vectorBytes, _ := json.Marshal(imageVector)
+		vectorStr := string(vectorBytes)
+		
+		// Find similar images with pHash Hamming distance <= 5 OR Vector Cosine distance <= threshold
+		query := fmt.Sprintf(`
+			SELECT id, "imageFile_id", "imageFile_extension" FROM "%s"
+			WHERE "imageFile_id" != $1
+			  AND (
+				(phash IS NOT NULL AND phash != '' AND bit_count(('x' || phash)::bit(64) # ('x' || $2)::bit(64)) <= 5)
+				OR
+				("imageVector" IS NOT NULL AND "imageVector" <=> $3::vector <= %f)
+			  )
+		`, tableName, cfg.DuplicateCosineDistance)
+		rows, err = db.Query(query, imageFileID, phashStr, vectorStr)
+	} else {
+		// Fallback to only pHash
+		query := fmt.Sprintf(`
+			SELECT id, "imageFile_id", "imageFile_extension" FROM "%s"
+			WHERE phash IS NOT NULL 
+			  AND phash != ''
+			  AND "imageFile_id" != $1
+			  AND bit_count(('x' || phash)::bit(64) # ('x' || $2)::bit(64)) <= 5
+		`, tableName)
+		rows, err = db.Query(query, imageFileID, phashStr)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to query similar images: %w", err)
 	}
