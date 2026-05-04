@@ -30,6 +30,10 @@ HTTP endpoint:
 - `WATERMARK_MARGIN_RATIO`: watermark 與邊界距離比例，預設 `0.025`
 - `WATERMARK_OPACITY`: `0` 到 `1`，預設 `1.0`
 - `CACHE_CONTROL`: 上傳到 GCS 時寫入的 cache control，預設 `public, max-age=31536000`
+- `MAX_SOURCE_PIXELS`: 原圖 decode 前允許的最高像素數，預設 `60000000`；設為 `0` 可關閉限制
+- `ENABLE_IMAGE_VECTOR`: 是否啟用 CLIP image vector sidecar，預設 `false`
+- `VECTOR_IMAGE_MAX_SIZE`: vector sidecar 送進 CLIP 前的最長邊，預設 `384`
+- `TORCH_NUM_THREADS`: vector sidecar 的 Torch CPU thread 數，預設 `1`
 
 ## 本機執行
 

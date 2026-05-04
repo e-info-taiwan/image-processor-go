@@ -114,6 +114,19 @@ func TestApplyEXIFOrientationAndExifHelpers(t *testing.T) {
 	}
 }
 
+func TestValidateSourceImageSizeRejectsTooManyPixels(t *testing.T) {
+	t.Parallel()
+	if err := validateSourceImageSize(10, 10, 99); err == nil {
+		t.Fatal("expected pixel limit error")
+	}
+	if err := validateSourceImageSize(10, 10, 100); err != nil {
+		t.Fatalf("expected image at limit to pass: %v", err)
+	}
+	if err := validateSourceImageSize(10, 10, 0); err != nil {
+		t.Fatalf("expected disabled limit to pass: %v", err)
+	}
+}
+
 func TestEncodeByExtFormats(t *testing.T) {
 	t.Parallel()
 	img := rgbaImage(8, 8)

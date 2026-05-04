@@ -28,6 +28,12 @@ import (
 
 var derivedObjectPattern = regexp.MustCompile(`-w\d{2,}`)
 
+var (
+	updateImageMetadata   = UpdateImageMetadata
+	updateImageVectorOnly = UpdateImageVectorOnly
+	computeImageVector    = ComputeImageVector
+)
+
 type Processor struct {
 	cfg       Config
 	storage   *storage.Client
@@ -75,6 +81,13 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 	if err != nil {
 		return fmt.Errorf("read object: %w", err)
 	}
+	if p.cfg.MaxSourcePixels > 0 {
+		if imgCfg, _, err := image.DecodeConfig(bytes.NewReader(originalBytes)); err == nil {
+			if err := validateSourceImageSize(imgCfg.Width, imgCfg.Height, p.cfg.MaxSourcePixels); err != nil {
+				return err
+			}
+		}
+	}
 	sourceImg, _, err := image.Decode(bytes.NewReader(originalBytes))
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
@@ -120,43 +133,50 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 			return err
 		}
 
-		// Background task: Calculate pHash and Vector, then update DB when resize target is w480
 		if target.Label == "w480" {
-			go func() {
-				// Compute pHash
-				hash, err := goimagehash.PerceptionHash(resized)
-				var phashStr string
-				if err != nil {
-					log.Printf("failed to compute phash for %s: %v", event.Name, err)
-				} else {
-					phashStr = fmt.Sprintf("%016x", hash.GetHash())
-				}
-
-				// Compute Vector
-				var imgVector []float64
-				if p.cfg.EnableImageVector {
-					vec, err := ComputeImageVector(mainBytes)
-					if err != nil {
-						log.Printf("failed to compute image vector for %s: %v", event.Name, err)
-					} else {
-						imgVector = vec
-					}
-				}
-
-				// Extract imageFile_id
-				imageFileID := nameWithoutExt
-
-				// Update DB
-				if phashStr != "" {
-					if err := UpdateImageMetadata(p.cfg, imageFileID, phashStr, event.Bucket, exifMap, imgVector); err != nil {
-						log.Printf("failed to update image metadata for %s: %v", event.Name, err)
-					}
-				}
-			}()
+			p.handleW480Metadata(event.Name, event.Bucket, nameWithoutExt, resized, exifMap, mainBytes)
 		}
+
+		mainBytes = nil
+		webpBytes = nil
 	}
 
 	return nil
+}
+
+func (p *Processor) handleW480Metadata(eventName, bucketName, imageFileID string, resized image.Image, exifMap map[string]interface{}, encodedW480Bytes []byte) {
+	hash, err := goimagehash.PerceptionHash(resized)
+	if err != nil {
+		log.Printf("failed to compute phash for %s: %v", eventName, err)
+		return
+	}
+	phashStr := fmt.Sprintf("%016x", hash.GetHash())
+
+	if err := updateImageMetadata(p.cfg, imageFileID, phashStr, bucketName, exifMap, nil); err != nil {
+		log.Printf("failed to update image metadata for %s: %v", eventName, err)
+	}
+
+	if !p.cfg.EnableImageVector {
+		return
+	}
+
+	vectorPayload := append([]byte(nil), encodedW480Bytes...)
+	go p.computeAndUpdateImageVector(eventName, bucketName, imageFileID, phashStr, exifMap, vectorPayload)
+}
+
+func (p *Processor) computeAndUpdateImageVector(eventName, bucketName, imageFileID, phashStr string, exifMap map[string]interface{}, encodedW480Bytes []byte) {
+	vec, err := computeImageVector(encodedW480Bytes)
+	if err != nil {
+		log.Printf("failed to compute image vector for %s: %v", eventName, err)
+		return
+	}
+	if len(vec) == 0 {
+		log.Printf("computed empty image vector for %s", eventName)
+		return
+	}
+	if err := updateImageMetadata(p.cfg, imageFileID, phashStr, bucketName, exifMap, vec); err != nil {
+		log.Printf("failed to update image vector for %s: %v", eventName, err)
+	}
 }
 
 func (p *Processor) BackfillImageVectorFromObject(ctx context.Context, bucketName, objectName, imageFileID string) error {
@@ -171,7 +191,7 @@ func (p *Processor) BackfillImageVectorFromObject(ctx context.Context, bucketNam
 		return fmt.Errorf("read object: %w", err)
 	}
 
-	vector, err := ComputeImageVector(imageBytes)
+	vector, err := computeImageVector(imageBytes)
 	if err != nil {
 		return fmt.Errorf("compute vector: %w", err)
 	}
@@ -179,7 +199,7 @@ func (p *Processor) BackfillImageVectorFromObject(ctx context.Context, bucketNam
 		return fmt.Errorf("computed empty image vector")
 	}
 
-	if err := UpdateImageVectorOnly(p.cfg, imageFileID, vector); err != nil {
+	if err := updateImageVectorOnly(p.cfg, imageFileID, vector); err != nil {
 		return fmt.Errorf("update image vector: %w", err)
 	}
 	return nil
@@ -232,6 +252,17 @@ func resizeImage(src image.Image, targetWidth int) *image.NRGBA {
 	dst := image.NewNRGBA(image.Rect(0, 0, targetWidth, targetHeight))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
 	return dst
+}
+
+func validateSourceImageSize(width, height, maxPixels int) error {
+	if maxPixels <= 0 || width <= 0 || height <= 0 {
+		return nil
+	}
+	pixels := int64(width) * int64(height)
+	if pixels <= int64(maxPixels) {
+		return nil
+	}
+	return fmt.Errorf("source image is too large: %dx%d=%d pixels exceeds max %d", width, height, pixels, maxPixels)
 }
 
 func applyWatermark(base *image.NRGBA, watermark *image.NRGBA, scale, marginRatio, opacity float64) *image.NRGBA {

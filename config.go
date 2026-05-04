@@ -25,6 +25,7 @@ type Config struct {
 	DuplicateCosineDistance float64
 	ImageBucket             string
 	BackfillAPIKey          string
+	MaxSourcePixels         int
 }
 
 type ResizeTarget struct {
@@ -56,6 +57,7 @@ func LoadConfig() (Config, error) {
 		DuplicateCosineDistance: parseFloatEnv("DUPLICATE_COSINE_DISTANCE", 0.15),
 		ImageBucket:             strings.TrimSpace(os.Getenv("IMAGE_BUCKET")),
 		BackfillAPIKey:          strings.TrimSpace(os.Getenv("BACKFILL_API_KEY")),
+		MaxSourcePixels:         parseIntEnv("MAX_SOURCE_PIXELS", 60000000),
 	}
 
 	if cfg.EnableWatermark && cfg.WatermarkPath == "" {
@@ -115,6 +117,18 @@ func parseFloatEnv(key string, fallback float64) float64 {
 		return fallback
 	}
 	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func parseIntEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
 	if err != nil {
 		return fallback
 	}

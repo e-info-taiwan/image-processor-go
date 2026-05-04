@@ -10,6 +10,7 @@ func TestLoadConfig_DefaultsAndWatermarkError(t *testing.T) {
 		for _, k := range []string{
 			"RESIZE_TARGETS", "ENABLE_WATERMARK", "WATERMARK_PATH", "PORT",
 			"ENABLE_IMAGE_VECTOR", "DUPLICATE_COSINE_DISTANCE", "IMAGE_BUCKET", "BACKFILL_API_KEY",
+			"MAX_SOURCE_PIXELS",
 		} {
 			_ = os.Unsetenv(k)
 		}
@@ -29,6 +30,7 @@ func TestLoadConfig_DefaultsAndWatermarkError(t *testing.T) {
 	t.Setenv("DUPLICATE_COSINE_DISTANCE", "0.2")
 	t.Setenv("IMAGE_BUCKET", "  bk  ")
 	t.Setenv("BACKFILL_API_KEY", " key ")
+	t.Setenv("MAX_SOURCE_PIXELS", "12345")
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +39,9 @@ func TestLoadConfig_DefaultsAndWatermarkError(t *testing.T) {
 		t.Fatalf("%+v", cfg)
 	}
 	if cfg.ImageBucket != "bk" || cfg.BackfillAPIKey != "key" {
+		t.Fatalf("%+v", cfg)
+	}
+	if cfg.MaxSourcePixels != 12345 {
 		t.Fatalf("%+v", cfg)
 	}
 }
