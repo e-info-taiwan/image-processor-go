@@ -67,5 +67,6 @@ go run .
 - 只處理副檔名為 `jpg`、`jpeg`、`png`、`gif`、`tif`、`tiff`、`webp`
 - 會略過系統產生的混合大小寫 `.webP`，避免重複處理
 - 已經帶有 `-w###` 的檔名會直接略過，避免無限遞迴
+- 若 GCS event 帶有 source object generation，輸出物件會寫入 `sourceGeneration` metadata；同一個 source generation 重送時，服務會用最後一個 resize target 的 `.webP` 當完成 sentinel 直接略過，避免重複 resize
 - 每個 resize target 會輸出原副檔名版本，例如 `images/foo-w800.jpg`
 - 每個 resize target 也會輸出 WebP 版本，例如 `images/foo-w800.webP`

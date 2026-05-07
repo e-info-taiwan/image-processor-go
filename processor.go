@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	imagedraw "image/draw"
@@ -25,6 +26,8 @@ import (
 	xtiff "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 )
+
+const sourceGenerationMetadataKey = "sourceGeneration"
 
 var derivedObjectPattern = regexp.MustCompile(`-w\d{2,}`)
 
@@ -71,6 +74,22 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		return nil
 	}
 
+	base := filepath.Base(event.Name)
+	ext := filepath.Ext(base)
+	nameWithoutExt := strings.TrimSuffix(base, filepath.Ext(base))
+	baseDir := strings.TrimSuffix(event.Name, base)
+
+	originalWebPName := baseDir + nameWithoutExt + ".webP"
+	completionSentinelName := completionSentinelObjectName(baseDir, nameWithoutExt, originalWebPName, p.cfg.ResizeTargets)
+	alreadyProcessed, err := p.alreadyProcessedSourceGeneration(ctx, event.Bucket, completionSentinelName, event.Generation)
+	if err != nil {
+		return err
+	}
+	if alreadyProcessed {
+		log.Printf("skip already processed source generation: object=%s generation=%s", event.Name, event.Generation)
+		return nil
+	}
+
 	reader, err := p.storage.Bucket(event.Bucket).Object(event.Name).NewReader(ctx)
 	if err != nil {
 		return fmt.Errorf("open object: %w", err)
@@ -95,17 +114,11 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 	sourceImg = applyEXIFOrientation(sourceImg, originalBytes)
 	exifMap := extractAllEXIF(originalBytes)
 
-	base := filepath.Base(event.Name)
-	ext := filepath.Ext(base)
-	nameWithoutExt := strings.TrimSuffix(base, filepath.Ext(base))
-	baseDir := strings.TrimSuffix(event.Name, base)
-
-	originalWebPName := baseDir + nameWithoutExt + ".webP"
 	originalWebPBytes, err := encodeWebP(sourceImg)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", originalWebPName, err)
 	}
-	if err := p.uploadObject(ctx, event.Bucket, originalWebPName, "image/webp", originalWebPBytes); err != nil {
+	if err := p.uploadObject(ctx, event.Bucket, originalWebPName, "image/webp", originalWebPBytes, event.Generation); err != nil {
 		return err
 	}
 
@@ -120,7 +133,7 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		if err != nil {
 			return fmt.Errorf("encode %s: %w", mainObjectName, err)
 		}
-		if err := p.uploadObject(ctx, event.Bucket, mainObjectName, contentTypeFromExt(ext), mainBytes); err != nil {
+		if err := p.uploadObject(ctx, event.Bucket, mainObjectName, contentTypeFromExt(ext), mainBytes, event.Generation); err != nil {
 			return err
 		}
 
@@ -129,7 +142,7 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		if err != nil {
 			return fmt.Errorf("encode %s: %w", webpObjectName, err)
 		}
-		if err := p.uploadObject(ctx, event.Bucket, webpObjectName, "image/webp", webpBytes); err != nil {
+		if err := p.uploadObject(ctx, event.Bucket, webpObjectName, "image/webp", webpBytes, event.Generation); err != nil {
 			return err
 		}
 
@@ -142,6 +155,28 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 	}
 
 	return nil
+}
+
+func (p *Processor) alreadyProcessedSourceGeneration(ctx context.Context, bucketName, sentinelObjectName, sourceGeneration string) (bool, error) {
+	if sourceGeneration == "" {
+		return false, nil
+	}
+
+	attrs, err := p.storage.Bucket(bucketName).Object(sentinelObjectName).Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check sentinel object %s: %w", sentinelObjectName, err)
+	}
+	return attrs.Metadata[sourceGenerationMetadataKey] == sourceGeneration, nil
+}
+
+func completionSentinelObjectName(baseDir, imageFileID, fallback string, targets []ResizeTarget) string {
+	if len(targets) == 0 {
+		return fallback
+	}
+	return baseDir + imageFileID + "-" + targets[len(targets)-1].Label + ".webP"
 }
 
 func (p *Processor) handleW480Metadata(eventName, bucketName, imageFileID string, resized image.Image, exifMap map[string]interface{}, encodedW480Bytes []byte) {
@@ -205,10 +240,15 @@ func (p *Processor) BackfillImageVectorFromObject(ctx context.Context, bucketNam
 	return nil
 }
 
-func (p *Processor) uploadObject(ctx context.Context, bucketName, objectName, contentType string, payload []byte) error {
+func (p *Processor) uploadObject(ctx context.Context, bucketName, objectName, contentType string, payload []byte, sourceGeneration string) error {
 	writer := p.storage.Bucket(bucketName).Object(objectName).NewWriter(ctx)
 	writer.ContentType = contentType
 	writer.CacheControl = p.cfg.CacheControl
+	if sourceGeneration != "" {
+		writer.Metadata = map[string]string{
+			sourceGenerationMetadataKey: sourceGeneration,
+		}
+	}
 
 	if _, err := writer.Write(payload); err != nil {
 		_ = writer.Close()

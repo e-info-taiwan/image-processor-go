@@ -14,12 +14,12 @@ import (
 
 func TestDecodeStorageEvent_DirectJSON(t *testing.T) {
 	t.Parallel()
-	body := []byte(`{"bucket":"b","name":"n.jpg","contentType":"image/jpeg"}`)
+	body := []byte(`{"bucket":"b","name":"n.jpg","contentType":"image/jpeg","generation":"123"}`)
 	ev, err := DecodeStorageEvent(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.Bucket != "b" || ev.Name != "n.jpg" || ev.ContentType != "image/jpeg" {
+	if ev.Bucket != "b" || ev.Name != "n.jpg" || ev.ContentType != "image/jpeg" || ev.Generation != "123" {
 		t.Fatalf("%+v", ev)
 	}
 }
@@ -31,7 +31,8 @@ func TestDecodeStorageEvent_PubSub(t *testing.T) {
 		"message": map[string]interface{}{
 			"data": base64.StdEncoding.EncodeToString(inner),
 			"attributes": map[string]string{
-				"contentType": "image/png",
+				"contentType":      "image/png",
+				"objectGeneration": "456",
 			},
 		},
 	}
@@ -40,7 +41,7 @@ func TestDecodeStorageEvent_PubSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.Bucket != "bb" || ev.Name != "x.png" || ev.ContentType != "image/png" {
+	if ev.Bucket != "bb" || ev.Name != "x.png" || ev.ContentType != "image/png" || ev.Generation != "456" {
 		t.Fatalf("%+v", ev)
 	}
 }

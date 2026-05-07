@@ -88,6 +88,7 @@ type storageEvent struct {
 	Bucket      string `json:"bucket"`
 	Name        string `json:"name"`
 	ContentType string `json:"contentType"`
+	Generation  string `json:"generation"`
 }
 
 func DecodeStorageEvent(body []byte) (storageEvent, error) {
@@ -116,6 +117,12 @@ func DecodeStorageEvent(body []byte) (storageEvent, error) {
 	}
 	if event.ContentType == "" {
 		event.ContentType = envelope.Message.Attributes["contentType"]
+	}
+	if event.Generation == "" {
+		event.Generation = envelope.Message.Attributes["objectGeneration"]
+	}
+	if event.Generation == "" {
+		event.Generation = envelope.Message.Attributes["object_generation"]
 	}
 	return event, nil
 }
