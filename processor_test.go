@@ -32,10 +32,11 @@ func TestDerivedObjectPattern(t *testing.T) {
 	}
 }
 
-func TestHandleW480MetadataWritesMetadataBeforeVector(t *testing.T) {
+func TestHandleW480MetadataWritesMetadataBeforeVectorOnlyUpdate(t *testing.T) {
 	var mu sync.Mutex
 	events := []string{}
 	vectorDone := make(chan struct{})
+	errCh := make(chan string, 1)
 
 	prevUpdateMetadata := updateImageMetadata
 	prevComputeVector := computeImageVector
@@ -46,14 +47,19 @@ func TestHandleW480MetadataWritesMetadataBeforeVector(t *testing.T) {
 		updateImageVectorOnly = prevUpdateVector
 	})
 
-	updateImageMetadata = func(Config, string, string, string, map[string]interface{}, []float64) error {
-		mu.Lock()
-		if len(events) == 2 {
-			events = append(events, "metadata-vector")
-			close(vectorDone)
-		} else {
-			events = append(events, "metadata")
+	recordUnexpected := func(msg string) {
+		select {
+		case errCh <- msg:
+		default:
 		}
+	}
+
+	updateImageMetadata = func(_ Config, _ string, _ string, _ string, _ map[string]interface{}, imageVector []float64) error {
+		if len(imageVector) > 0 {
+			recordUnexpected("metadata update should not receive image vector")
+		}
+		mu.Lock()
+		events = append(events, "metadata")
 		mu.Unlock()
 		return nil
 	}
@@ -63,8 +69,14 @@ func TestHandleW480MetadataWritesMetadataBeforeVector(t *testing.T) {
 		mu.Unlock()
 		return []float64{0.1, 0.2}, nil
 	}
-	updateImageVectorOnly = func(Config, string, []float64) error {
-		t.Fatal("upload vector path should update metadata so possibleDuplicates can include vector matches")
+	updateImageVectorOnly = func(_ Config, _ string, imageVector []float64) error {
+		if len(imageVector) != 2 {
+			recordUnexpected("vector-only update should receive computed vector")
+		}
+		mu.Lock()
+		events = append(events, "vector-only")
+		close(vectorDone)
+		mu.Unlock()
 		return nil
 	}
 
@@ -76,13 +88,18 @@ func TestHandleW480MetadataWritesMetadataBeforeVector(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for vector update")
 	}
+	select {
+	case msg := <-errCh:
+		t.Fatal(msg)
+	default:
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if len(events) != 3 {
 		t.Fatalf("unexpected events: %v", events)
 	}
-	want := []string{"metadata", "compute-vector", "metadata-vector"}
+	want := []string{"metadata", "compute-vector", "vector-only"}
 	for i := range want {
 		if events[i] != want[i] {
 			t.Fatalf("metadata should be written before vector work, got %v", events)

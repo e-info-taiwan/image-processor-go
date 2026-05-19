@@ -124,7 +124,7 @@ func TestMarkImageVectorBackfillFailed(t *testing.T) {
 func TestUpdateImageMetadata_NoVector(t *testing.T) {
 	withMockDB(t, func(mock sqlmock.Sqlmock) {
 		selRows := sqlmock.NewRows([]string{"id", "imageFile_id", "imageFile_extension"})
-		mock.ExpectQuery(`SELECT id, "imageFile_id", "imageFile_extension" FROM "Photo"`).
+		mock.ExpectQuery(`bit_count\(\('x' \|\| phash\)::bit\(64\) # \('x' \|\| \$2\)::bit\(64\)\) <= 2`).
 			WithArgs(driver.Value("img1"), driver.Value("abcd0000")).
 			WillReturnRows(selRows)
 		mock.ExpectExec(`UPDATE "Photo"`).
@@ -142,15 +142,15 @@ func TestUpdateImageMetadata_WithVector(t *testing.T) {
 	withMockDB(t, func(mock sqlmock.Sqlmock) {
 		selRows := sqlmock.NewRows([]string{"id", "imageFile_id", "imageFile_extension"}).
 			AddRow("dup-1", "other", "png")
-		mock.ExpectQuery(`SELECT id, "imageFile_id", "imageFile_extension" FROM "Photo"`).
-			WithArgs(driver.Value("img1"), driver.Value("abcd0000"), sqlmock.AnyArg()).
+		mock.ExpectQuery(`bit_count\(\('x' \|\| phash\)::bit\(64\) # \('x' \|\| \$2\)::bit\(64\)\) <= 2`).
+			WithArgs(driver.Value("img1"), driver.Value("abcd0000")).
 			WillReturnRows(selRows)
 		mock.ExpectExec(`UPDATE "Photo"`).
 			WithArgs(driver.Value("abcd0000"), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), driver.Value("img1")).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		vec := []float64{0.1, 0.2}
-		err := UpdateImageMetadata(Config{QueriedDbTable: "Photo", DuplicateCosineDistance: 0.15}, "img1", "abcd0000", "mybucket", map[string]interface{}{}, vec)
+		err := UpdateImageMetadata(Config{QueriedDbTable: "Photo"}, "img1", "abcd0000", "mybucket", map[string]interface{}{}, vec)
 		if err != nil {
 			t.Fatal(err)
 		}

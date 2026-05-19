@@ -70,3 +70,5 @@ go run .
 - 若 GCS event 帶有 source object generation，輸出物件會寫入 `sourceGeneration` metadata；同一個 source generation 重送時，服務會用最後一個 resize target 的 `.webP` 當完成 sentinel 直接略過，避免重複 resize
 - 每個 resize target 會輸出原副檔名版本，例如 `images/foo-w800.jpg`
 - 每個 resize target 也會輸出 WebP 版本，例如 `images/foo-w800.webP`
+- `possibleDuplicates` 只寫入 pHash 判定的高度重複圖片，64-bit Hamming distance 門檻為 `<= 2`
+- `ENABLE_IMAGE_VECTOR` 只負責計算並寫入 `imageVector`，不會把 vector 相似結果混入 `possibleDuplicates`

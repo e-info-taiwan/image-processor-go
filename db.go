@@ -18,6 +18,10 @@ type Duplicate struct {
 	URL string `json:"url"`
 }
 
+// Keep "exact duplicate" pHash matching strict; this only tolerates tiny
+// differences from resizing or re-encoding.
+const phashDuplicateHammingThreshold = 2
+
 type ImageVectorBackfillCandidate struct {
 	ID                 string
 	ImageFileID        string
@@ -55,34 +59,15 @@ func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, e
 
 	tableName := cfg.QueriedDbTable
 
-	var rows *sql.Rows
-
-	if len(imageVector) > 0 {
-		vectorBytes, _ := json.Marshal(imageVector)
-		vectorStr := string(vectorBytes)
-
-		// Find similar images with pHash Hamming distance <= 5 OR Vector Cosine distance <= threshold
-		query := fmt.Sprintf(`
-			SELECT id, "imageFile_id", "imageFile_extension" FROM "%s"
-			WHERE "imageFile_id" != $1
-			  AND (
-				(phash IS NOT NULL AND phash != '' AND bit_count(('x' || phash)::bit(64) # ('x' || $2)::bit(64)) <= 5)
-				OR
-				("imageVector" IS NOT NULL AND "imageVector" <=> $3::vector <= %f)
-			  )
-		`, tableName, cfg.DuplicateCosineDistance)
-		rows, err = db.Query(query, imageFileID, phashStr, vectorStr)
-	} else {
-		// Fallback to only pHash
-		query := fmt.Sprintf(`
-			SELECT id, "imageFile_id", "imageFile_extension" FROM "%s"
-			WHERE phash IS NOT NULL 
-			  AND phash != ''
-			  AND "imageFile_id" != $1
-			  AND bit_count(('x' || phash)::bit(64) # ('x' || $2)::bit(64)) <= 5
-		`, tableName)
-		rows, err = db.Query(query, imageFileID, phashStr)
-	}
+	// possibleDuplicates powers the CMS pHash duplicate UI, so keep it pHash-only.
+	query := fmt.Sprintf(`
+		SELECT id, "imageFile_id", "imageFile_extension" FROM "%s"
+		WHERE phash IS NOT NULL
+		  AND phash != ''
+		  AND "imageFile_id" != $1
+		  AND bit_count(('x' || phash)::bit(64) # ('x' || $2)::bit(64)) <= %d
+	`, tableName, phashDuplicateHammingThreshold)
+	rows, err := db.Query(query, imageFileID, phashStr)
 
 	if err != nil {
 		return fmt.Errorf("failed to query similar images: %w", err)
@@ -118,7 +103,7 @@ func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, e
 		return fmt.Errorf("failed to marshal exif: %w", err)
 	}
 
-	// 2. Update DB with new phash, exif, possibleDuplicates, and imageVector
+	// 2. Update DB with new phash, exif, possibleDuplicates, and optional imageVector.
 	if len(imageVector) > 0 {
 		vectorBytes, _ := json.Marshal(imageVector)
 		vectorStr := string(vectorBytes)

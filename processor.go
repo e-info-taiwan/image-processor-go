@@ -198,10 +198,10 @@ func (p *Processor) handleW480Metadata(eventName, bucketName, imageFileID string
 	}
 
 	vectorPayload := append([]byte(nil), encodedW480Bytes...)
-	go p.computeAndUpdateImageVector(eventName, bucketName, imageFileID, phashStr, exifMap, vectorPayload)
+	go p.computeAndUpdateImageVector(eventName, imageFileID, vectorPayload)
 }
 
-func (p *Processor) computeAndUpdateImageVector(eventName, bucketName, imageFileID, phashStr string, exifMap map[string]interface{}, encodedW480Bytes []byte) {
+func (p *Processor) computeAndUpdateImageVector(eventName, imageFileID string, encodedW480Bytes []byte) {
 	vec, err := computeImageVector(encodedW480Bytes)
 	if err != nil {
 		log.Printf("failed to compute image vector for %s: %v", eventName, err)
@@ -211,7 +211,7 @@ func (p *Processor) computeAndUpdateImageVector(eventName, bucketName, imageFile
 		log.Printf("computed empty image vector for %s", eventName)
 		return
 	}
-	if err := updateImageMetadata(p.cfg, imageFileID, phashStr, bucketName, exifMap, vec); err != nil {
+	if err := updateImageVectorOnly(p.cfg, imageFileID, vec); err != nil {
 		log.Printf("failed to update image vector for %s: %v", eventName, err)
 	}
 }
