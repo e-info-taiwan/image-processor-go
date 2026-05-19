@@ -49,6 +49,9 @@ func TestHasAlphaAndFlattenIfNeeded(t *testing.T) {
 		t.Fatal()
 	}
 	flat := flattenIfNeeded(opaque)
+	if flat != opaque {
+		t.Fatal("expected opaque NRGBA to be reused")
+	}
 	if flat.Bounds().Dx() != 2 {
 		t.Fatal()
 	}
@@ -57,8 +60,22 @@ func TestHasAlphaAndFlattenIfNeeded(t *testing.T) {
 		t.Fatal()
 	}
 	flat2 := flattenIfNeeded(trans)
+	if flat2 == trans {
+		t.Fatal("expected transparent NRGBA to be flattened into a new image")
+	}
 	if flat2.Bounds().Dx() != 2 {
 		t.Fatal()
+	}
+
+	opaqueRGBA := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for i := 3; i < len(opaqueRGBA.Pix); i += 4 {
+		opaqueRGBA.Pix[i] = 0xff
+	}
+	if hasAlphaRGBA(opaqueRGBA) {
+		t.Fatal("expected opaque RGBA to have no alpha")
+	}
+	if flat := flattenIfNeeded(opaqueRGBA); flat != opaqueRGBA {
+		t.Fatal("expected opaque RGBA to be reused")
 	}
 }
 
@@ -158,6 +175,9 @@ func TestAdjustOpacityAndApplyWatermark(t *testing.T) {
 	if out == nil || out.Bounds().Dx() != 40 {
 		t.Fatal()
 	}
+	if out != base {
+		t.Fatal("expected watermark to mutate the resized base in place")
+	}
 	// nil branches
 	if applyWatermark(nil, wm, 0.2, 0, 1) != nil {
 		t.Fatal()
@@ -174,9 +194,13 @@ func TestAdjustOpacityAndApplyWatermark(t *testing.T) {
 	if out3 == nil {
 		t.Fatal()
 	}
+	beforeAlpha := wm.Pix[3]
 	op := adjustOpacity(wm, 0.5)
-	if op == nil || len(op.Pix) != len(wm.Pix) {
+	if op != wm || len(op.Pix) != len(wm.Pix) {
 		t.Fatal()
+	}
+	if wm.Pix[3] >= beforeAlpha {
+		t.Fatal("expected opacity adjustment to mutate alpha in place")
 	}
 }
 

@@ -68,6 +68,46 @@ func TestProcess_WithFakeGCS(t *testing.T) {
 	}
 }
 
+func TestProcess_ReturnsHardErrorWhenDecodeConfigFails(t *testing.T) {
+	srv, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+		Scheme: "http",
+		InitialObjects: []fakestorage.Object{
+			{
+				ObjectAttrs: fakestorage.ObjectAttrs{
+					BucketName: "test-bucket",
+					Name:       "images/broken.jpg",
+				},
+				Content: []byte("not an image"),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	client := srv.Client()
+	cfg := Config{
+		ResizeTargets:     []ResizeTarget{{Label: "w480", Width: 24}},
+		EnableWatermark:   false,
+		CacheControl:      "public, max-age=1",
+		EnableImageVector: false,
+		MaxSourcePixels:   60000000,
+	}
+	p, err := NewProcessor(cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = p.Process(context.Background(), storageEvent{Bucket: "test-bucket", Name: "images/broken.jpg"})
+	if err == nil {
+		t.Fatal("expected decode config error")
+	}
+	if !strings.Contains(err.Error(), "decode image config") {
+		t.Fatalf("expected decode config error, got %v", err)
+	}
+}
+
 func TestProcess_SkipsDuplicateSourceGeneration(t *testing.T) {
 	jpg := jpegFixture(t)
 	srv, err := fakestorage.NewServerWithOptions(fakestorage.Options{
