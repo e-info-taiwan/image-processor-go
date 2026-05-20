@@ -1,20 +1,35 @@
 timeout: '1200s'
 steps:
   - name: gcr.io/cloud-builders/docker
+    id: Pull Cache
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker pull ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:latest || true
+
+  - name: gcr.io/cloud-builders/docker
     id: Build
     args:
       - build
+      - --cache-from
+      - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:latest
       - -t
       - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+      - -t
+      - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:latest
       - -f
       - Dockerfile
       - .
 
   - name: gcr.io/cloud-builders/docker
     id: Push
+    entrypoint: bash
     args:
-      - push
-      - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+      - -c
+      - |
+        docker push ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+        docker push ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:latest
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     id: Deploy
@@ -37,6 +52,7 @@ steps:
 
 images:
   - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}
+  - ${_AR_HOSTNAME}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:latest
 
 substitutions:
   _AR_HOSTNAME: asia-east1-docker.pkg.dev
