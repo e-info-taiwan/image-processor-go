@@ -119,14 +119,15 @@ func TestApplyEXIFOrientationAndExifHelpers(t *testing.T) {
 	t.Parallel()
 	img := rgbaImage(4, 4)
 	// random bytes -> orientation 1 -> unchanged
-	out := applyEXIFOrientation(img, []byte{1, 2, 3})
+	exifData := decodeExif([]byte{1, 2, 3})
+	out := applyEXIFOrientation(img, exifData)
 	if out.Bounds() != img.Bounds() {
 		t.Fatal()
 	}
-	if exifOrientation([]byte{0}) != 1 {
+	if exifOrientation(exifData) != 1 {
 		t.Fatal()
 	}
-	if len(extractAllEXIF([]byte{0})) != 0 {
+	if len(extractAllEXIF(exifData)) != 0 {
 		t.Fatal()
 	}
 }

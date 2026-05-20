@@ -109,19 +109,19 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 			return err
 		}
 	}
-	sourceImg, _, err := image.Decode(bytes.NewReader(originalBytes))
+	sourceImg, format, err := image.Decode(bytes.NewReader(originalBytes))
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
 	}
-	sourceImg = applyEXIFOrientation(sourceImg, originalBytes)
-	exifMap := extractAllEXIF(originalBytes)
+	isOpaque := (strings.ToLower(format) == "jpeg")
 
-	originalWebPBytes, err := encodeWebP(sourceImg)
+	exifData := decodeExif(originalBytes)
+	sourceImg = applyEXIFOrientation(sourceImg, exifData)
+	exifMap := extractAllEXIF(exifData)
+
+	_, err = p.encodeAndUpload(ctx, sourceImg, event.Bucket, originalWebPName, "image/webp", ".webp", event.Generation, isOpaque, false)
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", originalWebPName, err)
-	}
-	if err := p.uploadObject(ctx, event.Bucket, originalWebPName, "image/webp", originalWebPBytes, event.Generation); err != nil {
-		return err
+		return fmt.Errorf("encode and upload %s: %w", originalWebPName, err)
 	}
 
 	for _, target := range p.cfg.ResizeTargets {
@@ -131,29 +131,21 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		}
 
 		mainObjectName := baseDir + nameWithoutExt + "-" + target.Label + ext
-		mainBytes, err := encodeByExt(resized, ext)
+		needMainBytes := (target.Label == "w480" && p.cfg.EnableImageVector)
+		mainBytes, err := p.encodeAndUpload(ctx, resized, event.Bucket, mainObjectName, contentTypeFromExt(ext), ext, event.Generation, isOpaque, needMainBytes)
 		if err != nil {
-			return fmt.Errorf("encode %s: %w", mainObjectName, err)
-		}
-		if err := p.uploadObject(ctx, event.Bucket, mainObjectName, contentTypeFromExt(ext), mainBytes, event.Generation); err != nil {
-			return err
+			return fmt.Errorf("encode and upload %s: %w", mainObjectName, err)
 		}
 
 		webpObjectName := baseDir + nameWithoutExt + "-" + target.Label + ".webP"
-		webpBytes, err := encodeWebP(resized)
+		_, err = p.encodeAndUpload(ctx, resized, event.Bucket, webpObjectName, "image/webp", ".webp", event.Generation, isOpaque, false)
 		if err != nil {
-			return fmt.Errorf("encode %s: %w", webpObjectName, err)
-		}
-		if err := p.uploadObject(ctx, event.Bucket, webpObjectName, "image/webp", webpBytes, event.Generation); err != nil {
-			return err
+			return fmt.Errorf("encode and upload %s: %w", webpObjectName, err)
 		}
 
 		if target.Label == "w480" {
 			p.handleW480Metadata(event.Name, event.Bucket, nameWithoutExt, resized, exifMap, mainBytes)
 		}
-
-		mainBytes = nil
-		webpBytes = nil
 	}
 
 	return nil
@@ -356,37 +348,102 @@ func adjustOpacity(img *image.NRGBA, opacity float64) *image.NRGBA {
 	return img
 }
 
-func encodeByExt(img image.Image, ext string) ([]byte, error) {
-	var buf bytes.Buffer
+func encodeToWriter(w io.Writer, img image.Image, ext string, isOpaque bool) error {
 	switch strings.ToLower(ext) {
 	case ".jpg", ".jpeg":
-		if err := jpeg.Encode(&buf, flattenIfNeeded(img), &jpeg.Options{Quality: 85}); err != nil {
-			return nil, err
+		var toEncode image.Image = img
+		if !isOpaque {
+			toEncode = flattenIfNeeded(img)
 		}
+		return jpeg.Encode(w, toEncode, &jpeg.Options{Quality: 85})
 	case ".png":
-		if err := png.Encode(&buf, img); err != nil {
-			return nil, err
-		}
+		return png.Encode(w, img)
 	case ".gif":
-		if err := gif.Encode(&buf, flattenIfNeeded(img), nil); err != nil {
-			return nil, err
+		var toEncode image.Image = img
+		if !isOpaque {
+			toEncode = flattenIfNeeded(img)
 		}
+		return gif.Encode(w, toEncode, nil)
 	case ".tif", ".tiff":
-		if err := xtiff.Encode(&buf, img, nil); err != nil {
-			return nil, err
-		}
+		return xtiff.Encode(w, img, nil)
 	case ".webp":
-		return encodeWebP(img)
+		return webp.Encode(w, img, webp.Options{
+			Quality: 85,
+			Method:  2,
+		})
 	default:
-		if err := jpeg.Encode(&buf, flattenIfNeeded(img), &jpeg.Options{Quality: 85}); err != nil {
-			return nil, err
+		var toEncode image.Image = img
+		if !isOpaque {
+			toEncode = flattenIfNeeded(img)
 		}
+		return jpeg.Encode(w, toEncode, &jpeg.Options{Quality: 85})
+	}
+}
+
+func encodeByExt(img image.Image, ext string) ([]byte, error) {
+	var buf bytes.Buffer
+	err := encodeToWriter(&buf, img, ext, false)
+	if err != nil {
+		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func applyEXIFOrientation(img image.Image, data []byte) image.Image {
-	orientation := exifOrientation(data)
+func (p *Processor) encodeAndUpload(ctx context.Context, img image.Image, bucketName, objectName, contentType string, ext string, sourceGeneration string, isOpaque bool, returnBytes bool) ([]byte, error) {
+	writer := p.storage.Bucket(bucketName).Object(objectName).NewWriter(ctx)
+	writer.ContentType = contentType
+	writer.CacheControl = p.cfg.CacheControl
+	if sourceGeneration != "" {
+		writer.Metadata = map[string]string{
+			sourceGenerationMetadataKey: sourceGeneration,
+		}
+	}
+
+	var buf bytes.Buffer
+	var w io.Writer = writer
+	if returnBytes {
+		w = io.MultiWriter(writer, &buf)
+	}
+
+	var err error
+	if strings.ToLower(contentType) == "image/webp" {
+		err = webp.Encode(w, img, webp.Options{
+			Quality: 85,
+			Method:  2,
+		})
+	} else {
+		err = encodeToWriter(w, img, ext, isOpaque)
+	}
+
+	if err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("encode image: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close GCS writer: %w", err)
+	}
+
+	log.Printf("uploaded gs://%s/%s", bucketName, objectName)
+	if returnBytes {
+		return buf.Bytes(), nil
+	}
+	return nil, nil
+}
+
+func decodeExif(data []byte) *exifpkg.Exif {
+	exifData, err := exifpkg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	return exifData
+}
+
+func applyEXIFOrientation(img image.Image, exifData *exifpkg.Exif) image.Image {
+	if exifData == nil {
+		return img
+	}
+	orientation := exifOrientation(exifData)
 	switch orientation {
 	case 3:
 		return rotate180(img)
@@ -399,9 +456,8 @@ func applyEXIFOrientation(img image.Image, data []byte) image.Image {
 	}
 }
 
-func exifOrientation(data []byte) int {
-	exifData, err := exifpkg.Decode(bytes.NewReader(data))
-	if err != nil {
+func exifOrientation(exifData *exifpkg.Exif) int {
+	if exifData == nil {
 		return 1
 	}
 	tag, err := exifData.Get(exifpkg.Orientation)
@@ -424,9 +480,8 @@ func (w *exifWalker) Walk(name exifpkg.FieldName, tag *tiff.Tag) error {
 	return nil
 }
 
-func extractAllEXIF(data []byte) map[string]interface{} {
-	exifData, err := exifpkg.Decode(bytes.NewReader(data))
-	if err != nil {
+func extractAllEXIF(exifData *exifpkg.Exif) map[string]interface{} {
+	if exifData == nil {
 		return map[string]interface{}{}
 	}
 	walker := &exifWalker{Data: make(map[string]interface{})}

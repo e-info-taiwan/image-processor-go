@@ -3,6 +3,7 @@ import os
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from sentence_transformers import SentenceTransformer
 from PIL import Image, ImageOps
 import torch
@@ -35,7 +36,7 @@ def prepare_image_for_vector(body):
     image = ImageOps.exif_transpose(image)
     image = image.convert("RGB")
     max_size = vector_image_max_size()
-    image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    image.thumbnail((max_size, max_size), Image.Resampling.BILINEAR)
     return image
 
 
@@ -61,9 +62,12 @@ async def vectorize_image(request: Request):
 
         image = prepare_image_for_vector(body)
 
-        with torch.inference_mode():
-            vector = _model.encode(image, show_progress_bar=False, convert_to_numpy=True)
-        return JSONResponse(content={"vector": vector.tolist()})
+        def run_inference(img):
+            with torch.inference_mode():
+                return _model.encode(img, show_progress_bar=False, convert_to_numpy=True).tolist()
+
+        vector_list = await run_in_threadpool(run_inference, image)
+        return JSONResponse(content={"vector": vector_list})
 
     except Exception as e:
         print(f"Error vectorizing image: {e}")

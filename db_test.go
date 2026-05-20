@@ -20,8 +20,10 @@ func withMockDB(t *testing.T, fn func(sqlmock.Sqlmock)) {
 	}
 	prev := dbOpen
 	dbOpen = func(Config) (*sql.DB, error) { return db, nil }
+	dbInstance = nil
 	t.Cleanup(func() {
 		dbOpen = prev
+		dbInstance = nil
 		_ = db.Close()
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Errorf("sqlmock expectations: %v", err)
@@ -190,7 +192,11 @@ func TestUpdateImageMetadata_UpdateFails(t *testing.T) {
 func TestListImageVectorBackfillCandidates_DBOpenFail(t *testing.T) {
 	prev := dbOpen
 	dbOpen = func(Config) (*sql.DB, error) { return nil, errors.New("no db") }
-	t.Cleanup(func() { dbOpen = prev })
+	dbInstance = nil
+	t.Cleanup(func() {
+		dbOpen = prev
+		dbInstance = nil
+	})
 	_, err := ListImageVectorBackfillCandidates(Config{QueriedDbTable: "Photo"}, ListImageVectorBackfillCandidatesInput{Mode: "all", Limit: 1})
 	if err == nil || !strings.Contains(err.Error(), "connect") {
 		t.Fatalf("got %v", err)
@@ -200,7 +206,11 @@ func TestListImageVectorBackfillCandidates_DBOpenFail(t *testing.T) {
 func TestUpdateImageVectorOnly_DBOpenFail(t *testing.T) {
 	prev := dbOpen
 	dbOpen = func(Config) (*sql.DB, error) { return nil, errors.New("no db") }
-	t.Cleanup(func() { dbOpen = prev })
+	dbInstance = nil
+	t.Cleanup(func() {
+		dbOpen = prev
+		dbInstance = nil
+	})
 	err := UpdateImageVectorOnly(Config{QueriedDbTable: "Photo"}, "x", []float64{1})
 	if err == nil || !strings.Contains(err.Error(), "connect") {
 		t.Fatalf("got %v", err)

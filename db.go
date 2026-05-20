@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -40,14 +41,28 @@ type ListImageVectorBackfillCandidatesInput struct {
 var ErrInvalidCursor = errors.New("invalid cursor")
 
 // dbOpen opens the application database. Overridden in tests (e.g. sqlmock).
-var dbOpen = func(cfg Config) (*sql.DB, error) {
-	connStr := fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
-		cfg.DbHost, cfg.DbName, cfg.DbUser, cfg.DbPassword)
-	return sql.Open("postgres", connStr)
-}
+var (
+	dbOpen = func(cfg Config) (*sql.DB, error) {
+		connStr := fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
+			cfg.DbHost, cfg.DbName, cfg.DbUser, cfg.DbPassword)
+		return sql.Open("postgres", connStr)
+	}
+	dbInstance *sql.DB
+	dbMu       sync.Mutex
+)
 
 func getDBConnection(cfg Config) (*sql.DB, error) {
-	return dbOpen(cfg)
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if dbInstance != nil {
+		return dbInstance, nil
+	}
+	db, err := dbOpen(cfg)
+	if err != nil {
+		return nil, err
+	}
+	dbInstance = db
+	return dbInstance, nil
 }
 
 func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, exifData map[string]interface{}, imageVector []float64) error {
@@ -55,7 +70,6 @@ func UpdateImageMetadata(cfg Config, imageFileID, phashStr, bucketName string, e
 	if err != nil {
 		return fmt.Errorf("failed to connect to db: %w", err)
 	}
-	defer db.Close()
 
 	tableName := cfg.QueriedDbTable
 
@@ -135,7 +149,6 @@ func UpdateImageVectorOnly(cfg Config, imageFileID string, imageVector []float64
 	if err != nil {
 		return fmt.Errorf("failed to connect to db: %w", err)
 	}
-	defer db.Close()
 
 	tableName := cfg.QueriedDbTable
 	vectorBytes, _ := json.Marshal(imageVector)
@@ -217,7 +230,6 @@ func ListImageVectorBackfillCandidates(cfg Config, input ListImageVectorBackfill
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to db: %w", err)
 	}
-	defer db.Close()
 
 	tableName := cfg.QueriedDbTable
 	query, args, err := buildListImageVectorBackfillQuery(tableName, input)
@@ -254,7 +266,6 @@ func MarkImageVectorBackfillAttempt(cfg Config, imageFileID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to db: %w", err)
 	}
-	defer db.Close()
 
 	tableName := cfg.QueriedDbTable
 	query := fmt.Sprintf(`
@@ -274,7 +285,6 @@ func MarkImageVectorBackfillFailed(cfg Config, imageFileID, reason string, faile
 	if err != nil {
 		return fmt.Errorf("failed to connect to db: %w", err)
 	}
-	defer db.Close()
 
 	tableName := cfg.QueriedDbTable
 	query := fmt.Sprintf(`
