@@ -168,6 +168,57 @@ func UpdateImageVectorOnly(cfg Config, imageFileID string, imageVector []float64
 	return nil
 }
 
+func UpdateImageLabels(cfg Config, imageFileID string, labels []ImageLabel, suggestions []ImageLabelSuggestion) error {
+	db, err := getDBConnection(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to connect to db: %w", err)
+	}
+
+	tableName := cfg.QueriedDbTable
+	labelsJSON, err := json.Marshal(labels)
+	if err != nil {
+		return fmt.Errorf("marshal image labels: %w", err)
+	}
+	suggestionsJSON, err := json.Marshal(suggestions)
+	if err != nil {
+		return fmt.Errorf("marshal image label suggestions: %w", err)
+	}
+
+	updateQuery := fmt.Sprintf(`
+		UPDATE "%s"
+		SET "imageLabelRawResult" = $1,
+		    "imageLabelSuggestions" = $2,
+		    "imageLabelStatus" = 'success',
+		    "imageLabelFailReason" = NULL,
+		    "imageLabelUpdatedAt" = NOW()
+		WHERE "imageFile_id" = $3
+	`, tableName)
+	if _, err := db.Exec(updateQuery, string(labelsJSON), string(suggestionsJSON), imageFileID); err != nil {
+		return fmt.Errorf("failed to update image labels: %w", err)
+	}
+	return nil
+}
+
+func MarkImageLabelsFailed(cfg Config, imageFileID, reason string) error {
+	db, err := getDBConnection(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to connect to db: %w", err)
+	}
+
+	tableName := cfg.QueriedDbTable
+	updateQuery := fmt.Sprintf(`
+		UPDATE "%s"
+		SET "imageLabelStatus" = 'failed',
+		    "imageLabelFailReason" = $1,
+		    "imageLabelUpdatedAt" = NOW()
+		WHERE "imageFile_id" = $2
+	`, tableName)
+	if _, err := db.Exec(updateQuery, truncateReason(reason, 1024), imageFileID); err != nil {
+		return fmt.Errorf("failed to mark image labels failed: %w", err)
+	}
+	return nil
+}
+
 func buildListImageVectorBackfillQuery(tableName string, input ListImageVectorBackfillCandidatesInput) (string, []interface{}, error) {
 	conds := []string{}
 	args := []interface{}{}

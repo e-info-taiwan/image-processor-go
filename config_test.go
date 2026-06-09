@@ -9,7 +9,8 @@ func TestLoadConfig_DefaultsAndWatermarkError(t *testing.T) {
 	defer func() {
 		for _, k := range []string{
 			"RESIZE_TARGETS", "ENABLE_WATERMARK", "WATERMARK_PATH", "PORT",
-			"ENABLE_IMAGE_VECTOR", "IMAGE_BUCKET", "BACKFILL_API_KEY",
+			"ENABLE_IMAGE_VECTOR", "ENABLE_IMAGE_LABEL", "IMAGE_LABEL_MIN_SCORE",
+			"IMAGE_LABEL_MAX_RESULTS", "IMAGE_BUCKET", "BACKFILL_API_KEY",
 			"MAX_SOURCE_PIXELS",
 		} {
 			_ = os.Unsetenv(k)
@@ -27,6 +28,9 @@ func TestLoadConfig_DefaultsAndWatermarkError(t *testing.T) {
 	t.Setenv("ENABLE_WATERMARK", "false")
 	t.Setenv("PORT", "9090")
 	t.Setenv("ENABLE_IMAGE_VECTOR", "true")
+	t.Setenv("ENABLE_IMAGE_LABEL", "true")
+	t.Setenv("IMAGE_LABEL_MIN_SCORE", "0.8")
+	t.Setenv("IMAGE_LABEL_MAX_RESULTS", "7")
 	t.Setenv("IMAGE_BUCKET", "  bk  ")
 	t.Setenv("BACKFILL_API_KEY", " key ")
 	t.Setenv("MAX_SOURCE_PIXELS", "12345")
@@ -35,6 +39,9 @@ func TestLoadConfig_DefaultsAndWatermarkError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Port != "9090" || !cfg.EnableImageVector {
+		t.Fatalf("%+v", cfg)
+	}
+	if !cfg.EnableImageLabel || cfg.ImageLabelMinScore != 0.8 || cfg.ImageLabelMaxResults != 7 {
 		t.Fatalf("%+v", cfg)
 	}
 	if cfg.ImageBucket != "bk" || cfg.BackfillAPIKey != "key" {

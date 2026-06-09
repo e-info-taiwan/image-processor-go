@@ -17,6 +17,9 @@ type Config struct {
 	WatermarkOpacity     float64
 	CacheControl         string
 	EnableImageVector    bool
+	EnableImageLabel     bool
+	ImageLabelMinScore   float64
+	ImageLabelMaxResults int
 	DbHost               string
 	DbName               string
 	DbUser               string
@@ -48,6 +51,9 @@ func LoadConfig() (Config, error) {
 		WatermarkOpacity:     parseFloatEnv("WATERMARK_OPACITY", 1.0),
 		CacheControl:         envOrDefault("CACHE_CONTROL", "public, max-age=31536000"),
 		EnableImageVector:    parseBoolEnv("ENABLE_IMAGE_VECTOR", false),
+		EnableImageLabel:     parseBoolEnv("ENABLE_IMAGE_LABEL", false),
+		ImageLabelMinScore:   parseFloatEnv("IMAGE_LABEL_MIN_SCORE", 0.75),
+		ImageLabelMaxResults: parseIntEnv("IMAGE_LABEL_MAX_RESULTS", 10),
 		DbHost:               envOrDefault("DB_HOST", "localhost"),
 		DbName:               envOrDefault("DB_NAME", "postgres"),
 		DbUser:               envOrDefault("DB_USER", "postgres"),

@@ -87,6 +87,36 @@ func TestUpdateImageVectorOnly(t *testing.T) {
 	})
 }
 
+func TestUpdateImageLabels(t *testing.T) {
+	withMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectExec(`UPDATE "Photo"`).
+			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), driver.Value("fid")).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := UpdateImageLabels(
+			Config{QueriedDbTable: "Photo"},
+			"fid",
+			[]ImageLabel{{Description: "Owl", Score: 0.91}},
+			[]ImageLabelSuggestion{{Tag: "owl", Label: "Owl", Score: 0.91}},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestMarkImageLabelsFailed(t *testing.T) {
+	withMockDB(t, func(mock sqlmock.Sqlmock) {
+		mock.ExpectExec(`UPDATE "Photo"`).
+			WithArgs(driver.Value("vision failed"), driver.Value("fid")).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		if err := MarkImageLabelsFailed(Config{QueriedDbTable: "Photo"}, "fid", "vision failed"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestUpdateImageVectorOnly_ExecError(t *testing.T) {
 	withMockDB(t, func(mock sqlmock.Sqlmock) {
 		mock.ExpectExec(`UPDATE "Photo"`).

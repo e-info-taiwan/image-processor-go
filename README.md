@@ -34,6 +34,9 @@ HTTP endpoint:
 - `ENABLE_IMAGE_VECTOR`: 是否啟用 CLIP image vector sidecar，預設 `false`
 - `VECTOR_IMAGE_MAX_SIZE`: vector sidecar 送進 CLIP 前的最長邊，預設 `384`
 - `TORCH_NUM_THREADS`: vector sidecar 的 Torch CPU thread 數，預設 `1`
+- `ENABLE_IMAGE_LABEL`: 是否啟用 Google Cloud Vision 圖片標籤偵測，預設 `false`
+- `IMAGE_LABEL_MIN_SCORE`: 寫入建議標籤的最低 Vision score，預設 `0.75`
+- `IMAGE_LABEL_MAX_RESULTS`: Cloud Vision `LABEL_DETECTION` 最大回傳數，預設 `10`
 
 ## 本機執行
 
@@ -61,6 +64,7 @@ go run .
 
 - `roles/storage.objectViewer`
 - `roles/storage.objectCreator`
+- 可使用 Google Cloud Vision API；專案需啟用 Cloud Vision API，服務帳號需能透過 ADC 呼叫 `vision.googleapis.com`
 
 ## 行為說明
 
@@ -72,3 +76,4 @@ go run .
 - 每個 resize target 也會輸出 WebP 版本，例如 `images/foo-w800.webP`
 - `possibleDuplicates` 只寫入 pHash 判定的高度重複圖片，64-bit Hamming distance 門檻為 `<= 2`
 - `ENABLE_IMAGE_VECTOR` 只負責計算並寫入 `imageVector`，不會把 vector 相似結果混入 `possibleDuplicates`
+- `ENABLE_IMAGE_LABEL=true` 時會用 w480 圖呼叫 Google Cloud Vision `LABEL_DETECTION`，並寫入 `imageLabelRawResult`、`imageLabelSuggestions`、`imageLabelStatus`、`imageLabelFailReason`、`imageLabelUpdatedAt`；欄位範例在 `docs/image-label-schema.sql`

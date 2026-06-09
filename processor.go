@@ -35,6 +35,9 @@ var (
 	updateImageMetadata   = UpdateImageMetadata
 	updateImageVectorOnly = UpdateImageVectorOnly
 	computeImageVector    = ComputeImageVector
+	detectImageLabels     = DetectImageLabels
+	updateImageLabels     = UpdateImageLabels
+	markImageLabelsFailed = MarkImageLabelsFailed
 )
 
 type Processor struct {
@@ -131,7 +134,7 @@ func (p *Processor) Process(ctx context.Context, event storageEvent) error {
 		}
 
 		mainObjectName := baseDir + nameWithoutExt + "-" + target.Label + ext
-		needMainBytes := (target.Label == "w480" && p.cfg.EnableImageVector)
+		needMainBytes := (target.Label == "w480" && (p.cfg.EnableImageVector || p.cfg.EnableImageLabel))
 		mainBytes, err := p.encodeAndUpload(ctx, resized, event.Bucket, mainObjectName, contentTypeFromExt(ext), ext, event.Generation, isOpaque, needMainBytes)
 		if err != nil {
 			return fmt.Errorf("encode and upload %s: %w", mainObjectName, err)
@@ -185,12 +188,17 @@ func (p *Processor) handleW480Metadata(eventName, bucketName, imageFileID string
 		log.Printf("failed to update image metadata for %s: %v", eventName, err)
 	}
 
-	if !p.cfg.EnableImageVector {
+	if !p.cfg.EnableImageVector && !p.cfg.EnableImageLabel {
 		return
 	}
 
-	vectorPayload := append([]byte(nil), encodedW480Bytes...)
-	go p.computeAndUpdateImageVector(eventName, imageFileID, vectorPayload)
+	payload := append([]byte(nil), encodedW480Bytes...)
+	if p.cfg.EnableImageVector {
+		go p.computeAndUpdateImageVector(eventName, imageFileID, payload)
+	}
+	if p.cfg.EnableImageLabel {
+		go p.computeAndUpdateImageLabels(eventName, imageFileID, payload)
+	}
 }
 
 func (p *Processor) computeAndUpdateImageVector(eventName, imageFileID string, encodedW480Bytes []byte) {
@@ -205,6 +213,22 @@ func (p *Processor) computeAndUpdateImageVector(eventName, imageFileID string, e
 	}
 	if err := updateImageVectorOnly(p.cfg, imageFileID, vec); err != nil {
 		log.Printf("failed to update image vector for %s: %v", eventName, err)
+	}
+}
+
+func (p *Processor) computeAndUpdateImageLabels(eventName, imageFileID string, encodedW480Bytes []byte) {
+	labels, err := detectImageLabels(p.cfg, encodedW480Bytes)
+	if err != nil {
+		log.Printf("failed to detect image labels for %s: %v", eventName, err)
+		if markErr := markImageLabelsFailed(p.cfg, imageFileID, err.Error()); markErr != nil {
+			log.Printf("failed to mark image labels failed for %s: %v", eventName, markErr)
+		}
+		return
+	}
+
+	suggestions := FilterImageLabelSuggestions(labels, p.cfg.ImageLabelMinScore)
+	if err := updateImageLabels(p.cfg, imageFileID, labels, suggestions); err != nil {
+		log.Printf("failed to update image labels for %s: %v", eventName, err)
 	}
 }
 

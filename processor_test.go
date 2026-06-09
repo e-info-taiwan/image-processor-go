@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"image"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -145,5 +146,122 @@ func TestHandleW480MetadataKeepsMetadataWhenVectorFails(t *testing.T) {
 	case <-vectorAttempted:
 	case <-time.After(2 * time.Second):
 		t.Fatal("vector compute did not run")
+	}
+}
+
+func TestHandleW480MetadataUpdatesImageLabels(t *testing.T) {
+	labelDone := make(chan struct{})
+	var mu sync.Mutex
+	events := []string{}
+
+	prevUpdateMetadata := updateImageMetadata
+	prevDetectLabels := detectImageLabels
+	prevUpdateLabels := updateImageLabels
+	prevMarkLabelsFailed := markImageLabelsFailed
+	t.Cleanup(func() {
+		updateImageMetadata = prevUpdateMetadata
+		detectImageLabels = prevDetectLabels
+		updateImageLabels = prevUpdateLabels
+		markImageLabelsFailed = prevMarkLabelsFailed
+	})
+
+	updateImageMetadata = func(Config, string, string, string, map[string]interface{}, []float64) error {
+		mu.Lock()
+		events = append(events, "metadata")
+		mu.Unlock()
+		return nil
+	}
+	detectImageLabels = func(cfg Config, imageBytes []byte) ([]ImageLabel, error) {
+		if cfg.ImageLabelMaxResults != 5 || string(imageBytes) != "w480" {
+			t.Fatalf("bad label request cfg=%+v bytes=%q", cfg, string(imageBytes))
+		}
+		mu.Lock()
+		events = append(events, "detect-labels")
+		mu.Unlock()
+		return []ImageLabel{
+			{Description: "Owl", Score: 0.9},
+			{Description: "Animal", Score: 0.3},
+		}, nil
+	}
+	updateImageLabels = func(_ Config, imageFileID string, labels []ImageLabel, suggestions []ImageLabelSuggestion) error {
+		if imageFileID != "a" || len(labels) != 2 || len(suggestions) != 1 || suggestions[0].Tag != "owl" {
+			t.Fatalf("unexpected labels update id=%s labels=%+v suggestions=%+v", imageFileID, labels, suggestions)
+		}
+		mu.Lock()
+		events = append(events, "update-labels")
+		close(labelDone)
+		mu.Unlock()
+		return nil
+	}
+	markImageLabelsFailed = func(Config, string, string) error {
+		t.Fatal("label failure should not be marked on success")
+		return nil
+	}
+
+	p := &Processor{cfg: Config{
+		EnableImageLabel:     true,
+		ImageLabelMinScore:   0.75,
+		ImageLabelMaxResults: 5,
+	}}
+	p.handleW480Metadata("images/a.jpg", "bucket", "a", image.NewRGBA(image.Rect(0, 0, 8, 8)), nil, []byte("w480"))
+
+	select {
+	case <-labelDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for label update")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"metadata", "detect-labels", "update-labels"}
+	if len(events) != len(want) {
+		t.Fatalf("events=%v", events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("events=%v", events)
+		}
+	}
+}
+
+func TestHandleW480MetadataMarksImageLabelsFailed(t *testing.T) {
+	failedDone := make(chan struct{})
+
+	prevUpdateMetadata := updateImageMetadata
+	prevDetectLabels := detectImageLabels
+	prevUpdateLabels := updateImageLabels
+	prevMarkLabelsFailed := markImageLabelsFailed
+	t.Cleanup(func() {
+		updateImageMetadata = prevUpdateMetadata
+		detectImageLabels = prevDetectLabels
+		updateImageLabels = prevUpdateLabels
+		markImageLabelsFailed = prevMarkLabelsFailed
+	})
+
+	updateImageMetadata = func(Config, string, string, string, map[string]interface{}, []float64) error {
+		return nil
+	}
+	detectImageLabels = func(Config, []byte) ([]ImageLabel, error) {
+		return nil, errors.New("vision unavailable")
+	}
+	updateImageLabels = func(Config, string, []ImageLabel, []ImageLabelSuggestion) error {
+		t.Fatal("label update should not run after detection failure")
+		return nil
+	}
+	markImageLabelsFailed = func(_ Config, imageFileID, reason string) error {
+		if imageFileID != "a" || !strings.Contains(reason, "vision unavailable") {
+			t.Fatalf("unexpected failure id=%s reason=%q", imageFileID, reason)
+		}
+		close(failedDone)
+		return nil
+	}
+
+	p := &Processor{cfg: Config{EnableImageLabel: true}}
+	p.handleW480Metadata("images/a.jpg", "bucket", "a", image.NewRGBA(image.Rect(0, 0, 8, 8)), nil, []byte("w480"))
+
+	select {
+	case <-failedDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for label failure")
 	}
 }
