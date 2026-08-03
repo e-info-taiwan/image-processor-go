@@ -155,12 +155,12 @@ func TestHandleW480MetadataUpdatesImageLabels(t *testing.T) {
 	events := []string{}
 
 	prevUpdateMetadata := updateImageMetadata
-	prevDetectLabels := detectImageLabels
+	prevDetectLabels := detectImageLabelsWithFaces
 	prevUpdateLabels := updateImageLabels
 	prevMarkLabelsFailed := markImageLabelsFailed
 	t.Cleanup(func() {
 		updateImageMetadata = prevUpdateMetadata
-		detectImageLabels = prevDetectLabels
+		detectImageLabelsWithFaces = prevDetectLabels
 		updateImageLabels = prevUpdateLabels
 		markImageLabelsFailed = prevMarkLabelsFailed
 	})
@@ -171,7 +171,7 @@ func TestHandleW480MetadataUpdatesImageLabels(t *testing.T) {
 		mu.Unlock()
 		return nil
 	}
-	detectImageLabels = func(cfg Config, imageBytes []byte) ([]ImageLabel, error) {
+	detectImageLabelsWithFaces = func(cfg Config, imageBytes []byte) ([]ImageLabel, bool, error) {
 		if cfg.ImageLabelMaxResults != 5 || string(imageBytes) != "w480" {
 			t.Fatalf("bad label request cfg=%+v bytes=%q", cfg, string(imageBytes))
 		}
@@ -181,10 +181,10 @@ func TestHandleW480MetadataUpdatesImageLabels(t *testing.T) {
 		return []ImageLabel{
 			{Description: "Owl", Score: 0.9},
 			{Description: "Animal", Score: 0.3},
-		}, nil
+		}, true, nil
 	}
 	updateImageLabels = func(_ Config, imageFileID string, labels []ImageLabel, suggestions []ImageLabelSuggestion) error {
-		if imageFileID != "a" || len(labels) != 2 || len(suggestions) != 1 || suggestions[0].Tag != "owl" {
+		if imageFileID != "a" || len(labels) != 2 || len(suggestions) != 2 || suggestions[0].Tag != "人物" || suggestions[1].Tag != "owl" {
 			t.Fatalf("unexpected labels update id=%s labels=%+v suggestions=%+v", imageFileID, labels, suggestions)
 		}
 		mu.Lock()
@@ -228,12 +228,12 @@ func TestHandleW480MetadataMarksImageLabelsFailed(t *testing.T) {
 	failedDone := make(chan struct{})
 
 	prevUpdateMetadata := updateImageMetadata
-	prevDetectLabels := detectImageLabels
+	prevDetectLabels := detectImageLabelsWithFaces
 	prevUpdateLabels := updateImageLabels
 	prevMarkLabelsFailed := markImageLabelsFailed
 	t.Cleanup(func() {
 		updateImageMetadata = prevUpdateMetadata
-		detectImageLabels = prevDetectLabels
+		detectImageLabelsWithFaces = prevDetectLabels
 		updateImageLabels = prevUpdateLabels
 		markImageLabelsFailed = prevMarkLabelsFailed
 	})
@@ -241,8 +241,8 @@ func TestHandleW480MetadataMarksImageLabelsFailed(t *testing.T) {
 	updateImageMetadata = func(Config, string, string, string, map[string]interface{}, []float64) error {
 		return nil
 	}
-	detectImageLabels = func(Config, []byte) ([]ImageLabel, error) {
-		return nil, errors.New("vision unavailable")
+	detectImageLabelsWithFaces = func(Config, []byte) ([]ImageLabel, bool, error) {
+		return nil, false, errors.New("vision unavailable")
 	}
 	updateImageLabels = func(Config, string, []ImageLabel, []ImageLabelSuggestion) error {
 		t.Fatal("label update should not run after detection failure")

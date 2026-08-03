@@ -36,7 +36,7 @@ HTTP endpoint:
 - `TORCH_NUM_THREADS`: vector sidecar 的 Torch CPU thread 數，預設 `1`
 - `ENABLE_IMAGE_LABEL`: 是否啟用 Google Cloud Vision 圖片標籤偵測，預設 `false`
 - `IMAGE_LABEL_MIN_SCORE`: 寫入建議標籤的最低 Vision score，預設 `0.75`
-- `IMAGE_LABEL_MAX_RESULTS`: Cloud Vision `LABEL_DETECTION` 最大回傳數，預設 `10`
+- `IMAGE_LABEL_MAX_RESULTS`: Cloud Vision `LABEL_DETECTION` 最大回傳數，預設 `10`；同一個請求也會執行 `FACE_DETECTION`、`LOGO_DETECTION`、`LANDMARK_DETECTION`
 
 ## 本機執行
 
@@ -76,4 +76,4 @@ go run .
 - 每個 resize target 也會輸出 WebP 版本，例如 `images/foo-w800.webP`
 - `possibleDuplicates` 只寫入 pHash 判定的高度重複圖片，64-bit Hamming distance 門檻為 `<= 2`
 - `ENABLE_IMAGE_VECTOR` 只負責計算並寫入 `imageVector`，不會把 vector 相似結果混入 `possibleDuplicates`
-- `ENABLE_IMAGE_LABEL=true` 時會用 w480 圖呼叫 Google Cloud Vision `LABEL_DETECTION`，並寫入 `imageLabelRawResult`、`imageLabelSuggestions`、`imageLabelStatus`、`imageLabelFailReason`、`imageLabelUpdatedAt`；欄位範例在 `docs/image-label-schema.sql`
+- `ENABLE_IMAGE_LABEL=true` 時會用 w480 圖呼叫 Google Cloud Vision `LABEL_DETECTION`、`FACE_DETECTION`、`LOGO_DETECTION`、`LANDMARK_DETECTION`，並寫入 `imageLabelRawResult`、`imageLabelSuggestions`、`imageLabelStatus`、`imageLabelFailReason`、`imageLabelUpdatedAt`。Logo 與 landmark 結果會併入既有標籤／建議標籤。只要偵測到至少一張臉，就會額外寫入 canonical 建議標籤「人物」，即使 Label Detection 僅回傳 Furniture、Table 等場景標籤；欄位範例在 `docs/image-label-schema.sql`

@@ -32,12 +32,12 @@ const sourceGenerationMetadataKey = "sourceGeneration"
 var derivedObjectPattern = regexp.MustCompile(`-w\d{2,}`)
 
 var (
-	updateImageMetadata   = UpdateImageMetadata
-	updateImageVectorOnly = UpdateImageVectorOnly
-	computeImageVector    = ComputeImageVector
-	detectImageLabels     = DetectImageLabels
-	updateImageLabels     = UpdateImageLabels
-	markImageLabelsFailed = MarkImageLabelsFailed
+	updateImageMetadata        = UpdateImageMetadata
+	updateImageVectorOnly      = UpdateImageVectorOnly
+	computeImageVector         = ComputeImageVector
+	detectImageLabelsWithFaces = DetectImageLabelsWithFaces
+	updateImageLabels          = UpdateImageLabels
+	markImageLabelsFailed      = MarkImageLabelsFailed
 )
 
 type Processor struct {
@@ -217,7 +217,7 @@ func (p *Processor) computeAndUpdateImageVector(eventName, imageFileID string, e
 }
 
 func (p *Processor) computeAndUpdateImageLabels(eventName, imageFileID string, encodedW480Bytes []byte) {
-	labels, err := detectImageLabels(p.cfg, encodedW480Bytes)
+	labels, hasPerson, err := detectImageLabelsWithFaces(p.cfg, encodedW480Bytes)
 	if err != nil {
 		log.Printf("failed to detect image labels for %s: %v", eventName, err)
 		if markErr := markImageLabelsFailed(p.cfg, imageFileID, err.Error()); markErr != nil {
@@ -226,7 +226,7 @@ func (p *Processor) computeAndUpdateImageLabels(eventName, imageFileID string, e
 		return
 	}
 
-	suggestions := FilterImageLabelSuggestions(labels, p.cfg.ImageLabelMinScore)
+	suggestions := AddPersonSuggestion(FilterImageLabelSuggestions(labels, p.cfg.ImageLabelMinScore), hasPerson)
 	if err := updateImageLabels(p.cfg, imageFileID, labels, suggestions); err != nil {
 		log.Printf("failed to update image labels for %s: %v", eventName, err)
 	}

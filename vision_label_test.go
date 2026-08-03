@@ -32,6 +32,17 @@ func TestFilterImageLabelSuggestions(t *testing.T) {
 	}
 }
 
+func TestAddPersonSuggestion(t *testing.T) {
+	suggestions := AddPersonSuggestion([]ImageLabelSuggestion{{Tag: "table", Label: "Table", Score: 0.9}}, true)
+	if len(suggestions) != 2 || suggestions[0].Tag != "人物" || suggestions[0].Source != "google-cloud-vision-face-detection" {
+		t.Fatalf("unexpected person suggestion: %+v", suggestions)
+	}
+
+	if got := AddPersonSuggestion(suggestions, false); len(got) != 2 {
+		t.Fatalf("hasPerson=false should leave suggestions unchanged: %+v", got)
+	}
+}
+
 func TestDetectImageLabels_OK(t *testing.T) {
 	prevEndpoint := visionAPIEndpoint
 	prevTokenSource := visionTokenSource
@@ -52,11 +63,17 @@ func TestDetectImageLabels_OK(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if len(req.Requests) != 1 || len(req.Requests[0].Features) != 1 {
+		if len(req.Requests) != 1 || len(req.Requests[0].Features) != 4 {
 			t.Fatalf("bad request shape: %+v", req)
 		}
 		if req.Requests[0].Features[0].Type != "LABEL_DETECTION" || req.Requests[0].Features[0].MaxResults != 3 {
 			t.Fatalf("bad feature: %+v", req.Requests[0].Features[0])
+		}
+		if req.Requests[0].Features[1].Type != "FACE_DETECTION" {
+			t.Fatalf("bad face feature: %+v", req.Requests[0].Features[1])
+		}
+		if req.Requests[0].Features[2].Type != "LOGO_DETECTION" || req.Requests[0].Features[3].Type != "LANDMARK_DETECTION" {
+			t.Fatalf("bad logo/landmark features: %+v", req.Requests[0].Features)
 		}
 		if req.Requests[0].Image.Content != base64.StdEncoding.EncodeToString([]byte("img")) {
 			t.Fatalf("bad image content")
@@ -85,6 +102,34 @@ func TestDetectImageLabels_OK(t *testing.T) {
 	}
 	if len(labels) != 1 || labels[0].Description != "Owl" || labels[0].Score != 0.91 {
 		t.Fatalf("unexpected labels: %+v", labels)
+	}
+}
+
+func TestDetectImageLabelsWithFaces(t *testing.T) {
+	prevEndpoint := visionAPIEndpoint
+	prevTokenSource := visionTokenSource
+	t.Cleanup(func() {
+		visionAPIEndpoint = prevEndpoint
+		visionTokenSource = prevTokenSource
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(visionAnnotateResponse{Responses: []visionAnnotateResult{{
+			LabelAnnotations:    []ImageLabel{{Description: "Table", Score: 0.95}},
+			FaceAnnotations:     []visionFace{{}},
+			LogoAnnotations:     []ImageLabel{{Description: "Google", Score: 0.91}},
+			LandmarkAnnotations: []ImageLabel{{Description: "Taipei 101", Score: 0.9}},
+		}}})
+	}))
+	defer srv.Close()
+	visionAPIEndpoint = srv.URL
+	visionTokenSource = func() (oauth2.TokenSource, error) {
+		return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}), nil
+	}
+
+	labels, hasPerson, err := DetectImageLabelsWithFaces(Config{}, []byte("img"))
+	if err != nil || !hasPerson || len(labels) != 3 || labels[1].Description != "Google" || labels[2].Description != "Taipei 101" {
+		t.Fatalf("labels=%+v hasPerson=%t err=%v", labels, hasPerson, err)
 	}
 }
 
