@@ -23,7 +23,7 @@ gcloud run jobs deploy photo-vector-backfill-lab \
   --image=<IMAGE_URI> \
   --region=<DEV_REGION> \
   --service-account=<LAB_SERVICE_ACCOUNT> \
-  --set-env-vars=VECTOR_LAB_MODE=seed,IMAGE_BUCKET=<PROD_IMAGE_BUCKET>,DB_HOST=<DEV_DB_HOST>,DB_NAME=<LAB_DB_NAME>,DB_USER=<LAB_DB_USER> \
+  --set-env-vars=VECTOR_LAB_MODE=seed,IMAGE_BUCKET=<PROD_IMAGE_BUCKET>,DB_HOST=<DEV_DB_HOST>,DB_NAME=<LAB_DB_NAME>,DB_USER=<LAB_DB_USER>,VECTOR_LAB_MAX_SEED_ITEMS=1000 \
   --set-secrets=DB_PASSWORD=<LAB_DB_PASSWORD_SECRET>:latest \
   --tasks=1 --parallelism=1 --task-timeout=6h --max-retries=1
 ```

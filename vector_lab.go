@@ -39,6 +39,7 @@ type vectorLabConfig struct {
 	ModelVersion       string
 	ObjectStartOffset  string
 	ObjectEndOffset    string
+	MaxSeedItems       int
 }
 
 type vectorLabImage struct {
@@ -62,6 +63,7 @@ func loadVectorLabConfig() (vectorLabConfig, error) {
 		ModelVersion:       envOrDefault("VECTOR_LAB_MODEL_VERSION", "clip-ViT-B-32"),
 		ObjectStartOffset:  strings.TrimSpace(os.Getenv("VECTOR_LAB_OBJECT_START_OFFSET")),
 		ObjectEndOffset:    strings.TrimSpace(os.Getenv("VECTOR_LAB_OBJECT_END_OFFSET")),
+		MaxSeedItems:       parseNonNegativeEnv("VECTOR_LAB_MAX_SEED_ITEMS", 0, 10000000),
 	}
 	if cfg.Mode != vectorLabModeSeed && cfg.Mode != vectorLabModeVectorize && cfg.Mode != vectorLabModeCandidates {
 		return vectorLabConfig{}, fmt.Errorf("VECTOR_LAB_MODE must be seed, vectorize, or candidates")
@@ -75,6 +77,14 @@ func loadVectorLabConfig() (vectorLabConfig, error) {
 func parsePositiveEnv(key string, fallback, min, max int) int {
 	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
 	if err != nil || value < min || value > max {
+		return fallback
+	}
+	return value
+}
+
+func parseNonNegativeEnv(key string, fallback, max int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || value < 0 || value > max {
 		return fallback
 	}
 	return value
@@ -174,6 +184,7 @@ func seedVectorLabImages(ctx context.Context, db *sql.DB, storageClient *storage
 		EndOffset:   cfg.ObjectEndOffset,
 	})
 	seeded := 0
+	seenFileIDs := make(map[string]struct{})
 	for {
 		attrs, err := iter.Next()
 		if err == iteratorDone {
@@ -186,6 +197,8 @@ func seedVectorLabImages(ctx context.Context, db *sql.DB, storageClient *storage
 		if !ok {
 			continue
 		}
+		_, alreadySeen := seenFileIDs[imageFileID]
+		seenFileIDs[imageFileID] = struct{}{}
 
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO vector_lab_images (image_file_id, object_name, source_format, generation, vector_status)
@@ -255,9 +268,15 @@ func seedVectorLabImages(ctx context.Context, db *sql.DB, storageClient *storage
 		if err != nil {
 			return fmt.Errorf("upsert manifest object %q: %w", attrs.Name, err)
 		}
-		seeded++
+		if !alreadySeen {
+			seeded++
+		}
 		if seeded%10000 == 0 {
 			log.Printf("seeded %d w480 objects", seeded)
+		}
+		if cfg.MaxSeedItems > 0 && seeded >= cfg.MaxSeedItems {
+			log.Printf("seed limit reached: %d unique images", seeded)
+			return nil
 		}
 	}
 	log.Printf("seed completed: %d w480 objects start=%q end=%q", seeded, cfg.ObjectStartOffset, cfg.ObjectEndOffset)
