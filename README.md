@@ -66,6 +66,16 @@ go run .
 - `roles/storage.objectCreator`
 - 可使用 Google Cloud Vision API；專案需啟用 Cloud Vision API，服務帳號需能透過 ADC 呼叫 `vision.googleapis.com`
 
+### Isolated vector-lab jobs
+
+`VECTOR_LAB_MODE` 會將同一個 image 改為一次性工作，不會啟動 HTTP server、Eventarc 或 Pub/Sub 圖片處理器：
+
+- `seed`：唯讀列舉 `IMAGE_BUCKET` 的 `images/*-w480.*`，寫入 lab DB manifest。manifest 以原始 file ID 去重；有原格式縮圖時優先使用它，否則才使用 `.webP`。可用 `VECTOR_LAB_OBJECT_START_OFFSET`／`VECTOR_LAB_OBJECT_END_OFFSET` 分割 listing。
+- `vectorize`：以 `FOR UPDATE SKIP LOCKED` 分片 claim manifest，唯讀下載縮圖、計算 CLIP 向量，再只寫入 lab DB。
+- `candidates`：以相同的可續跑 claim 機制，對每張圖取 Top-N cosine 近鄰並寫入候選 pair。執行前必須先建立 HNSW index，程式會拒絕沒有索引的全量掃描。
+
+lab Job 會自動建立 `docs/vector-lab-schema.sql` 中的 extension、tables 與一般 claim indexes；向量完成後，再於該資料庫手動建立註解中的 HNSW index，最後才執行 `candidates`。以新的 `VECTOR_LAB_CANDIDATE_RUN` 重跑候選時，所有已成功的來源都會安全地重新計算。`VECTOR_LAB_MAX_ITEMS_PER_TASK`（預設 500）會讓 vectorize/candidates task 提早成功結束；重複執行 Job 即可從 checkpoint 接續，避免單一 task timeout。Job 的 service account 只需要 prod bucket 的 `storage.objects.list`／`storage.objects.get`，以及 lab DB 的連線權限；絕不可授予 prod GCS 寫入或 prod DB credential。
+
 ## 行為說明
 
 - 只處理副檔名為 `jpg`、`jpeg`、`png`、`gif`、`tif`、`tiff`、`webp`

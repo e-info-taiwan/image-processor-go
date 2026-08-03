@@ -19,6 +19,11 @@ if [[ "${ENABLE_IMAGE_VECTOR,,}" == "true" || "$ENABLE_IMAGE_VECTOR" == "1" || "
     echo "Python Vector Server is ready!"
 fi
 
+if [[ -n "${VECTOR_LAB_MODE:-}" ]]; then
+    echo "Starting vector lab job: ${VECTOR_LAB_MODE}"
+    exec /app/image-processor
+fi
+
 echo "Starting Go Image Processor..."
 /app/image-processor &
 

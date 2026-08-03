@@ -28,6 +28,13 @@ func main() {
 	}
 	defer storageClient.Close()
 
+	if strings.TrimSpace(os.Getenv("VECTOR_LAB_MODE")) != "" {
+		if err := runVectorLab(ctx, cfg, storageClient); err != nil {
+			log.Fatalf("run vector lab job: %v", err)
+		}
+		return
+	}
+
 	processor, err := NewProcessor(cfg, storageClient)
 	if err != nil {
 		log.Fatalf("create processor: %v", err)
