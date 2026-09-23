@@ -28,6 +28,7 @@ type photoJobOptions struct {
 	Mode, ExpectedDatabase                    string
 	MaxItems, BatchSize, Attempts, MaxSeconds int
 	StartID, EndID                            int64
+	CreatedFrom, CreatedBefore                *time.Time
 }
 
 func photoJobInt(name string, fallback, min, max int64) (int64, error) {
@@ -52,10 +53,10 @@ func loadPhotoJobOptions() (photoJobOptions, error) {
 		fallback, min, max int64
 		target             *int
 	}{
-		{"BACKFILL_MAX_ITEMS", 50, 1, 10000, &cfg.MaxItems},
+		{"BACKFILL_MAX_ITEMS", 50, 1, 20000, &cfg.MaxItems},
 		{"BACKFILL_BATCH_SIZE", 25, 1, 100, &cfg.BatchSize},
 		{"BACKFILL_ATTEMPTS", 3, 1, 5, &cfg.Attempts},
-		{"BACKFILL_MAX_SECONDS", 3000, 360, 3300, &cfg.MaxSeconds},
+		{"BACKFILL_MAX_SECONDS", 3000, 360, 25200, &cfg.MaxSeconds},
 	}
 	for _, v := range values {
 		n, err := photoJobInt(v.name, v.fallback, v.min, v.max)
@@ -76,6 +77,24 @@ func loadPhotoJobOptions() (photoJobOptions, error) {
 	if cfg.StartID >= cfg.EndID {
 		return cfg, errors.New("BACKFILL_START_ID must be less than BACKFILL_END_ID")
 	}
+	for _, date := range []struct {
+		name   string
+		target **time.Time
+	}{
+		{"BACKFILL_CREATED_FROM", &cfg.CreatedFrom}, {"BACKFILL_CREATED_BEFORE", &cfg.CreatedBefore},
+	} {
+		if raw := strings.TrimSpace(os.Getenv(date.name)); raw != "" {
+			value, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return cfg, fmt.Errorf("%s must be RFC3339 with a timezone", date.name)
+			}
+			value = value.UTC()
+			*date.target = &value
+		}
+	}
+	if cfg.CreatedFrom != nil && cfg.CreatedBefore != nil && !cfg.CreatedFrom.Before(*cfg.CreatedBefore) {
+		return cfg, errors.New("BACKFILL_CREATED_FROM must be earlier than BACKFILL_CREATED_BEFORE")
+	}
 	tasks, err := photoJobInt("CLOUD_RUN_TASK_COUNT", 1, 1, 1)
 	if err != nil || tasks != 1 {
 		return cfg, errors.New("photo job requires tasks=1; overlapping executions are locked")
@@ -95,6 +114,8 @@ const photoJobSelect = `SELECT id, "imageFile_id", "imageFile_extension",
     AND "imageFile_id" IS NOT NULL AND btrim("imageFile_id") <> ''
     AND "imageFile_extension" IS NOT NULL AND btrim("imageFile_extension") <> ''
     AND (COALESCE(phash, '') = '' OR "imageVector" IS NULL OR COALESCE("imageLabelStatus", '') <> 'success')
+    AND ($4::timestamp IS NULL OR "createdAt" >= $4::timestamp)
+    AND ($5::timestamp IS NULL OR "createdAt" < $5::timestamp)
     ORDER BY id LIMIT $3`
 
 func runPhotoBackfillJob(cfg Config) error {
@@ -169,7 +190,7 @@ func runPhotoBackfillJob(cfg Config) error {
 	processed, failed := 0, 0
 	for processed < opts.MaxItems && time.Now().Add(310*time.Second).Before(stopAt) && ctx.Err() == nil {
 		limit := min(opts.BatchSize, opts.MaxItems-processed)
-		rows, err := conn.QueryContext(ctx, photoJobSelect, cursor, opts.EndID, limit)
+		rows, err := conn.QueryContext(ctx, photoJobSelect, cursor, opts.EndID, limit, opts.CreatedFrom, opts.CreatedBefore)
 		if err != nil {
 			return fmt.Errorf("list photo candidates: %w", err)
 		}
@@ -224,7 +245,8 @@ func photoJobPreflight(ctx context.Context, conn *sql.Conn, opts photoJobOptions
 		return errors.New("database does not match BACKFILL_EXPECTED_DATABASE")
 	}
 	required := map[string]string{
-		"phash": "text", "imageVector": "vector(512)", "imageVectorStatus": "text",
+		"createdAt": "timestamp(3) without time zone",
+		"phash":     "text", "imageVector": "vector(512)", "imageVectorStatus": "text",
 		"imageVectorFailReason": "text", "imageVectorUpdatedAt": "timestamp(3) without time zone",
 		"imageLabelRawResult": "jsonb", "imageLabelSuggestions": "jsonb", "imageLabelStatus": "text",
 		"imageLabelFailReason": "text", "imageLabelUpdatedAt": "timestamp(3) without time zone",
@@ -257,11 +279,11 @@ func photoJobPreflight(ctx context.Context, conn *sql.Conn, opts photoJobOptions
 		return fmt.Errorf("photo schema is not ready; missing or incompatible columns: %v", required)
 	}
 	var sample int
-	if err = conn.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT id FROM "Photo"
-        WHERE COALESCE(phash, '') = '' OR "imageVector" IS NULL OR COALESCE("imageLabelStatus", '') <> 'success' LIMIT 1000) p`).Scan(&sample); err != nil {
+	if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM ("+photoJobSelect+") p",
+		opts.StartID, opts.EndID, 1000, opts.CreatedFrom, opts.CreatedBefore).Scan(&sample); err != nil {
 		return err
 	}
-	log.Printf("photo_backfill preflight mode=%s schema=ready missing_sample_up_to_1000=%d", opts.Mode, sample)
+	log.Printf("photo_backfill preflight mode=%s schema=ready missing_sample_up_to_1000=%d created_from=%v created_before=%v", opts.Mode, sample, opts.CreatedFrom, opts.CreatedBefore)
 	return nil
 }
 

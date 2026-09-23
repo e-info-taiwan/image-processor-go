@@ -129,3 +129,20 @@ func TestPhotoJobVectorRequestCancellation(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestPhotoJobDateBounds(t *testing.T) {
+	t.Setenv("BACKFILL_CREATED_FROM", "2026-01-01T00:00:00+08:00")
+	t.Setenv("BACKFILL_CREATED_BEFORE", "2027-01-01T00:00:00+08:00")
+	opts, err := loadPhotoJobOptions()
+	if err != nil || opts.CreatedFrom.Format(time.RFC3339) != "2025-12-31T16:00:00Z" {
+		t.Fatalf("%+v %v", opts, err)
+	}
+	t.Setenv("BACKFILL_CREATED_BEFORE", "2025-01-01T00:00:00+08:00")
+	if _, err = loadPhotoJobOptions(); err == nil {
+		t.Fatal("reversed dates accepted")
+	}
+	t.Setenv("BACKFILL_CREATED_FROM", "2026-01-01")
+	if _, err = loadPhotoJobOptions(); err == nil {
+		t.Fatal("timezone-free date accepted")
+	}
+}

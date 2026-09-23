@@ -27,6 +27,7 @@ Configuration:
 | `BACKFILL_ATTEMPTS` | 3 per transient download/API failure in this execution |
 | `BACKFILL_MAX_SECONDS` | 3000; stops taking work with 310 seconds remaining |
 | `BACKFILL_START_ID`, `BACKFILL_END_ID` | 0 exclusive, 2147483647 inclusive |
+| `BACKFILL_CREATED_FROM`, `BACKFILL_CREATED_BEFORE` | optional RFC3339 timestamps, inclusive start / exclusive end |
 
 Run one task with parallelism 1, timeout 3600 seconds and task retries 0.
 A DB session advisory lock rejects overlapping photo executions. Each row has
@@ -47,3 +48,17 @@ the Go binary. `cloudbuild.backfill.yaml` builds only a Job image, never deploys
 the online service. Use `.gcloudignore.backfill` to restrict uploaded files.
 The CMS repository's `jobs/ai-backfill/deploy.py` creates both production Jobs
 with immutable image digests, a dedicated service account, and check mode.
+
+The 2026 production backfill uses Taipei calendar-year bounds:
+`BACKFILL_CREATED_FROM=2025-12-31T16:00:00Z` and
+`BACKFILL_CREATED_BEFORE=2026-12-31T16:00:00Z`. These filter the Photo
+`createdAt` timestamp stored in UTC, not IDs or modification times. Rows with
+unknown upload dates are excluded when date bounds are set. The date filter
+also applies to check mode.
+
+For this bounded annual run (about 13,134 processable photos), execution
+overrides may raise `BACKFILL_MAX_ITEMS` to 20,000 and `BACKFILL_MAX_SECONDS`
+to 25,200 (7 hours), with Cloud Run `--task-timeout=8h`. Defaults stay at 50
+items / 3,000 seconds. A longer Job keeps the same single worker, retry caps,
+advisory lock, per-item deadline, and incremental writes. The task timeout
+must always exceed the application time budget.

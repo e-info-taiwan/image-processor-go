@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 )
@@ -31,7 +32,7 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_, err = conn.ExecContext(ctx, `CREATE TABLE "Photo" (id SERIAL PRIMARY KEY,"imageFile_id" TEXT,"imageFile_extension" TEXT,phash TEXT NOT NULL DEFAULT '',"imageVector" vector(512))`)
+	_, err = conn.ExecContext(ctx, `CREATE TABLE "Photo" (id SERIAL PRIMARY KEY,"createdAt" TIMESTAMP(3),"imageFile_id" TEXT,"imageFile_extension" TEXT,phash TEXT NOT NULL DEFAULT '',"imageVector" vector(512))`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 	if err = conn.QueryRowContext(ctx, `SELECT phash FROM "Photo" WHERE id=1`).Scan(&hash); err != nil || hash != "" {
 		t.Fatalf("stale source was written: hash=%s err=%v", hash, err)
 	}
-	rows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25)
+	rows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,4 +87,35 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 	if !rows.Next() {
 		t.Fatal("missing row not eligible for resume")
 	}
+	rows.Close()
+	_, err = conn.ExecContext(ctx, `INSERT INTO "Photo" ("imageFile_id","imageFile_extension","createdAt") VALUES
+        ('old','jpg','2025-12-31 15:59:59.999'),
+        ('start','jpg','2025-12-31 16:00:00'),
+        ('last','jpg','2026-12-31 15:59:59.999'),
+        ('next','jpg','2026-12-31 16:00:00')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, _ := time.Parse(time.RFC3339, "2025-12-31T16:00:00Z")
+	before, _ := time.Parse(time.RFC3339, "2026-12-31T16:00:00Z")
+	dateRows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, from, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dateRows.Close()
+	ids := []int64{}
+	for dateRows.Next() {
+		var item photoJobItem
+		if err = dateRows.Scan(&item.ID, &item.FileID, &item.Extension, &item.NeedHash, &item.NeedVector, &item.NeedLabels); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, item.ID)
+	}
+	if err = dateRows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != 3 || ids[1] != 4 {
+		t.Fatalf("date bounds included other years or unknown dates: %v", ids)
+	}
+
 }
