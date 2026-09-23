@@ -143,6 +143,29 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 	if len(seen) != 5 {
 		t.Fatalf("shards omitted photos: %v", seen)
 	}
+	vectorRows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, nil, nil, "vector", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorCount := 0
+	for vectorRows.Next() {
+		var item photoJobItem
+		if err := vectorRows.Scan(&item.ID, &item.FileID, &item.Extension, &item.NeedHash, &item.NeedVector, &item.NeedLabels); err != nil {
+			t.Fatal(err)
+		}
+		if item.NeedHash || !item.NeedVector || item.NeedLabels {
+			t.Fatalf("CLIP-only selected other fields: %+v", item)
+		}
+		vectorCount++
+	}
+	if err := vectorRows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	vectorRows.Close()
+	if vectorCount != 5 {
+		t.Fatalf("CLIP-only missed null vectors: %d", vectorCount)
+	}
+
 	if err := lockPhotoJob(ctx, conn, photoJobOptions{Fields: "phash", ShardIndex: 0}); err != nil {
 		t.Fatal(err)
 	}

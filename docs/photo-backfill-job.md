@@ -84,3 +84,9 @@ is persisted immediately; source identity and empty-field guards preserve
 concurrent edits. Failures are logged by photo ID and make the task fail after
 other eligible photos have been attempted. Completion must be checked against
 remaining eligible rows; a successful bounded process alone is not sufficient.
+
+`BACKFILL_FIELDS=vector` is a single-task CLIP-only mode. It selects only null
+`imageVector` values and never selects pHash or Vision label work. Use
+`ENABLE_IMAGE_VECTOR=true`, `ENABLE_IMAGE_LABEL=false` and the annual date bounds
+for the remaining 2026 photos after lab import. It shares the vector/import lock
+and can run alongside the disjoint pHash shards.

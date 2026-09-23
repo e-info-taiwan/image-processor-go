@@ -98,8 +98,8 @@ func loadPhotoJobOptions() (photoJobOptions, error) {
 		return cfg, errors.New("BACKFILL_CREATED_FROM must be earlier than BACKFILL_CREATED_BEFORE")
 	}
 	cfg.Fields = envOrDefault("BACKFILL_FIELDS", "all")
-	if cfg.Fields != "all" && cfg.Fields != "phash" && cfg.Fields != "ai" {
-		return cfg, errors.New("BACKFILL_FIELDS must be all, phash, or ai")
+	if cfg.Fields != "all" && cfg.Fields != "phash" && cfg.Fields != "ai" && cfg.Fields != "vector" {
+		return cfg, errors.New("BACKFILL_FIELDS must be all, phash, ai, or vector")
 	}
 	cfg.ShardCount = 1
 	requiredTasks := int64(1)
@@ -126,14 +126,15 @@ type photoJobItem struct {
 }
 
 const photoJobSelect = `SELECT id, "imageFile_id", "imageFile_extension",
-    ($6 <> 'ai' AND COALESCE(phash, '') = ''),
+    ($6 NOT IN ('ai', 'vector') AND COALESCE(phash, '') = ''),
     ($6 <> 'phash' AND "imageVector" IS NULL),
-    ($6 <> 'phash' AND COALESCE("imageLabelStatus", '') <> 'success')
+    ($6 IN ('all', 'ai') AND COALESCE("imageLabelStatus", '') <> 'success')
     FROM "Photo" WHERE id > $1 AND id <= $2
     AND "imageFile_id" IS NOT NULL AND btrim("imageFile_id") <> ''
     AND "imageFile_extension" IS NOT NULL AND btrim("imageFile_extension") <> ''
-    AND (($6 <> 'ai' AND COALESCE(phash, '') = '') OR
-         ($6 <> 'phash' AND ("imageVector" IS NULL OR COALESCE("imageLabelStatus", '') <> 'success')))
+    AND (($6 NOT IN ('ai', 'vector') AND COALESCE(phash, '') = '') OR
+         ($6 <> 'phash' AND "imageVector" IS NULL) OR
+         ($6 IN ('all', 'ai') AND COALESCE("imageLabelStatus", '') <> 'success'))
     AND ($4::timestamp IS NULL OR "createdAt" >= $4::timestamp)
     AND ($5::timestamp IS NULL OR "createdAt" < $5::timestamp)
     AND id % $8::integer = $7::integer
@@ -159,7 +160,7 @@ func lockPhotoJob(ctx context.Context, conn *sql.Conn, opts photoJobOptions) err
 	if opts.Fields == "phash" {
 		queries = append(queries, `SELECT pg_try_advisory_lock_shared(62130923, 3)`,
 			fmt.Sprintf(`SELECT pg_try_advisory_lock(62130924, %d)`, opts.ShardIndex))
-	} else if opts.Fields != "ai" {
+	} else if opts.Fields != "ai" && opts.Fields != "vector" {
 		queries = append(queries, `SELECT pg_try_advisory_lock(62130923, 3)`)
 	}
 	for _, query := range queries {
@@ -218,8 +219,11 @@ func runPhotoBackfillJob(cfg Config) error {
 	if cfg.ImageBucket == "" {
 		return errors.New("IMAGE_BUCKET is required")
 	}
-	if opts.Fields != "phash" && (!cfg.EnableImageVector || !cfg.EnableImageLabel) {
-		return errors.New("photo job requires ENABLE_IMAGE_VECTOR and ENABLE_IMAGE_LABEL")
+	if opts.Fields != "phash" && !cfg.EnableImageVector {
+		return errors.New("photo job requires ENABLE_IMAGE_VECTOR for vector fields")
+	}
+	if (opts.Fields == "all" || opts.Fields == "ai") && !cfg.EnableImageLabel {
+		return errors.New("photo job requires ENABLE_IMAGE_LABEL for label fields")
 	}
 	if err = lockPhotoJob(ctx, conn, opts); err != nil {
 		return err
