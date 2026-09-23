@@ -388,7 +388,7 @@ func photoJobRetryable(err error) bool {
 	return strings.Contains(err.Error(), "server error (429)") || strings.Contains(err.Error(), "server error (5")
 }
 
-const photoJobMaxBytes = 40 << 20
+const photoJobMaxBytes = 64 << 20
 
 func photoJobRead(ctx context.Context, client *storage.Client, bucket, object string) ([]byte, error) {
 	reader, err := client.Bucket(bucket).Object(object).NewReader(ctx)
@@ -401,7 +401,7 @@ func photoJobRead(ctx context.Context, client *storage.Client, bucket, object st
 		return nil, err
 	}
 	if len(data) > photoJobMaxBytes {
-		return nil, errors.New("source exceeds 40 MiB job limit")
+		return nil, fmt.Errorf("source exceeds %d MiB job limit", photoJobMaxBytes>>20)
 	}
 	return data, nil
 }

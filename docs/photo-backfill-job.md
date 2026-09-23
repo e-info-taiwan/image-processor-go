@@ -33,7 +33,7 @@ Run one task with parallelism 1, timeout 3600 seconds and task retries 0.
 A DB session advisory lock rejects overlapping photo executions. Each row has
 a 300-second deadline; network/AI attempts have 60-second deadlines. Missing
 objects and permanent API failures are not retried in that execution. Original
-downloads are limited to 40 MiB and decoded images to `MAX_SOURCE_PIXELS`.
+downloads are limited to 64 MiB and decoded images to `MAX_SOURCE_PIXELS`.
 
 Database writes check the original Photo ID, file ID and extension, and only
 fill components that are still missing. A rename/replacement in the CMS cannot
