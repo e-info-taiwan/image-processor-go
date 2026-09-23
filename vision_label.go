@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -91,6 +92,10 @@ func DetectImageLabels(cfg Config, imageBytes []byte) ([]ImageLabel, error) {
 // DetectImageLabelsWithFaces performs label and face detection in one Vision
 // annotate request. hasPerson is true when Vision detects at least one face.
 func DetectImageLabelsWithFaces(cfg Config, imageBytes []byte) ([]ImageLabel, bool, error) {
+	return DetectImageLabelsWithFacesContext(context.Background(), cfg, imageBytes)
+}
+
+func DetectImageLabelsWithFacesContext(ctx context.Context, cfg Config, imageBytes []byte) ([]ImageLabel, bool, error) {
 	if len(imageBytes) == 0 {
 		return nil, false, fmt.Errorf("empty image bytes")
 	}
@@ -124,7 +129,7 @@ func DetectImageLabelsWithFaces(cfg Config, imageBytes []byte) ([]ImageLabel, bo
 		return nil, false, fmt.Errorf("marshal vision request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, visionAPIEndpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, visionAPIEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, false, fmt.Errorf("create vision request: %w", err)
 	}

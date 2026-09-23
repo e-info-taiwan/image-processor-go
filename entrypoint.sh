@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Check mode validates the DB only and never loads CLIP or calls paid AI APIs.
+if [[ "${AI_BACKFILL_JOB:-}" == "photos" && "${BACKFILL_MODE:-check}" == "check" ]]; then
+    exec /app/image-processor
+fi
+
 if [[ "${ENABLE_IMAGE_VECTOR,,}" == "true" || "$ENABLE_IMAGE_VECTOR" == "1" || "${ENABLE_IMAGE_VECTOR,,}" == "yes" || "${ENABLE_IMAGE_VECTOR,,}" == "on" ]]; then
     echo "Starting Python Vector Server on port 8081..."
     export VECTOR_PORT=8081
@@ -19,7 +24,7 @@ if [[ "${ENABLE_IMAGE_VECTOR,,}" == "true" || "$ENABLE_IMAGE_VECTOR" == "1" || "
     echo "Python Vector Server is ready!"
 fi
 
-if [[ -n "${VECTOR_LAB_MODE:-}" ]]; then
+if [[ -n "${VECTOR_LAB_MODE:-}" || "${AI_BACKFILL_JOB:-}" == "photos" ]]; then
     echo "Starting vector lab job: ${VECTOR_LAB_MODE}"
     exec /app/image-processor
 fi

@@ -1,0 +1,8 @@
+*
+!*.go
+!go.mod
+!go.sum
+!Dockerfile.backfill
+!cloudbuild.backfill.yaml
+!vector_server.py
+!entrypoint.sh

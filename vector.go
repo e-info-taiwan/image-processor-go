@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,13 +15,17 @@ type VectorResponse struct {
 }
 
 func ComputeImageVector(imageBytes []byte) ([]float64, error) {
+	return ComputeImageVectorContext(context.Background(), imageBytes)
+}
+
+func ComputeImageVectorContext(ctx context.Context, imageBytes []byte) ([]float64, error) {
 	port := os.Getenv("VECTOR_PORT")
 	if port == "" {
 		port = "8081"
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%s/vectorize", port)
 
-	req, err := http.NewRequest("POST", url, bytes.NewReader(imageBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(imageBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create vector request: %w", err)
 	}

@@ -21,6 +21,13 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	if os.Getenv("AI_BACKFILL_JOB") == "photos" {
+		if err := runPhotoBackfillJob(cfg); err != nil {
+			log.Fatalf("photo backfill job: %v", err)
+		}
+		return
+	}
+
 	ctx := context.Background()
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {

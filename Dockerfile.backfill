@@ -1,0 +1,14 @@
+FROM golang:1.23 AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/image-processor .
+
+FROM asia-east1-docker.pkg.dev/mimetic-sweep-456508-k4/cloud-run-source-deploy/image-processor-go/image-processor-go-dev@sha256:053a26fdf7b2103e5161f03096cb7c66a309b236074000346085afef72601289
+WORKDIR /app
+COPY --from=builder /out/image-processor /app/image-processor
+COPY vector_server.py entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+ENV AI_BACKFILL_JOB=photos BACKFILL_MODE=check
+ENTRYPOINT ["/app/entrypoint.sh"]
