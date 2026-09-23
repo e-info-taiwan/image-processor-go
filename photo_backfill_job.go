@@ -29,6 +29,8 @@ type photoJobOptions struct {
 	MaxItems, BatchSize, Attempts, MaxSeconds int
 	StartID, EndID                            int64
 	CreatedFrom, CreatedBefore                *time.Time
+	Fields                                    string
+	ShardIndex, ShardCount                    int
 }
 
 func photoJobInt(name string, fallback, min, max int64) (int64, error) {
@@ -53,10 +55,10 @@ func loadPhotoJobOptions() (photoJobOptions, error) {
 		fallback, min, max int64
 		target             *int
 	}{
-		{"BACKFILL_MAX_ITEMS", 50, 1, 20000, &cfg.MaxItems},
+		{"BACKFILL_MAX_ITEMS", 50, 1, 200000, &cfg.MaxItems},
 		{"BACKFILL_BATCH_SIZE", 25, 1, 100, &cfg.BatchSize},
 		{"BACKFILL_ATTEMPTS", 3, 1, 5, &cfg.Attempts},
-		{"BACKFILL_MAX_SECONDS", 3000, 360, 25200, &cfg.MaxSeconds},
+		{"BACKFILL_MAX_SECONDS", 3000, 360, 172800, &cfg.MaxSeconds},
 	}
 	for _, v := range values {
 		n, err := photoJobInt(v.name, v.fallback, v.min, v.max)
@@ -95,10 +97,25 @@ func loadPhotoJobOptions() (photoJobOptions, error) {
 	if cfg.CreatedFrom != nil && cfg.CreatedBefore != nil && !cfg.CreatedFrom.Before(*cfg.CreatedBefore) {
 		return cfg, errors.New("BACKFILL_CREATED_FROM must be earlier than BACKFILL_CREATED_BEFORE")
 	}
-	tasks, err := photoJobInt("CLOUD_RUN_TASK_COUNT", 1, 1, 1)
-	if err != nil || tasks != 1 {
-		return cfg, errors.New("photo job requires tasks=1; overlapping executions are locked")
+	cfg.Fields = envOrDefault("BACKFILL_FIELDS", "all")
+	if cfg.Fields != "all" && cfg.Fields != "phash" && cfg.Fields != "ai" {
+		return cfg, errors.New("BACKFILL_FIELDS must be all, phash, or ai")
 	}
+	cfg.ShardCount = 1
+	requiredTasks := int64(1)
+	if cfg.Fields == "phash" {
+		requiredTasks = 8
+		cfg.ShardCount = 8
+	}
+	tasks, err := photoJobInt("CLOUD_RUN_TASK_COUNT", 1, requiredTasks, requiredTasks)
+	if err != nil || tasks != requiredTasks {
+		return cfg, fmt.Errorf("photo job fields=%s requires tasks=%d", cfg.Fields, requiredTasks)
+	}
+	index, err := photoJobInt("CLOUD_RUN_TASK_INDEX", 0, 0, requiredTasks-1)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.ShardIndex = int(index)
 	return cfg, nil
 }
 
@@ -109,14 +126,53 @@ type photoJobItem struct {
 }
 
 const photoJobSelect = `SELECT id, "imageFile_id", "imageFile_extension",
-    COALESCE(phash, '') = '', "imageVector" IS NULL, COALESCE("imageLabelStatus", '') <> 'success'
+    ($6 <> 'ai' AND COALESCE(phash, '') = ''),
+    ($6 <> 'phash' AND "imageVector" IS NULL),
+    ($6 <> 'phash' AND COALESCE("imageLabelStatus", '') <> 'success')
     FROM "Photo" WHERE id > $1 AND id <= $2
     AND "imageFile_id" IS NOT NULL AND btrim("imageFile_id") <> ''
     AND "imageFile_extension" IS NOT NULL AND btrim("imageFile_extension") <> ''
-    AND (COALESCE(phash, '') = '' OR "imageVector" IS NULL OR COALESCE("imageLabelStatus", '') <> 'success')
+    AND (($6 <> 'ai' AND COALESCE(phash, '') = '') OR
+         ($6 <> 'phash' AND ("imageVector" IS NULL OR COALESCE("imageLabelStatus", '') <> 'success')))
     AND ($4::timestamp IS NULL OR "createdAt" >= $4::timestamp)
     AND ($5::timestamp IS NULL OR "createdAt" < $5::timestamp)
+    AND id % $8::integer = $7::integer
     ORDER BY id LIMIT $3`
+
+func photoJobQueryArgs(opts photoJobOptions, cursor int64, limit int) []any {
+	fields := opts.Fields
+	if fields == "" {
+		fields = "all"
+	}
+	shards := opts.ShardCount
+	if shards == 0 {
+		shards = 1
+	}
+	return []any{cursor, opts.EndID, limit, opts.CreatedFrom, opts.CreatedBefore, fields, opts.ShardIndex, shards}
+}
+
+func lockPhotoJob(ctx context.Context, conn *sql.Conn, opts photoJobOptions) error {
+	queries := []string{}
+	if opts.Fields != "phash" {
+		queries = append(queries, `SELECT pg_try_advisory_lock(62130923, 2)`)
+	}
+	if opts.Fields == "phash" {
+		queries = append(queries, `SELECT pg_try_advisory_lock_shared(62130923, 3)`,
+			fmt.Sprintf(`SELECT pg_try_advisory_lock(62130924, %d)`, opts.ShardIndex))
+	} else if opts.Fields != "ai" {
+		queries = append(queries, `SELECT pg_try_advisory_lock(62130923, 3)`)
+	}
+	for _, query := range queries {
+		var acquired bool
+		if err := conn.QueryRowContext(ctx, query).Scan(&acquired); err != nil {
+			return err
+		}
+		if !acquired {
+			return errors.New("another photo backfill execution is running for these fields/shard")
+		}
+	}
+	return nil
+}
 
 func runPhotoBackfillJob(cfg Config) error {
 	opts, err := loadPhotoJobOptions()
@@ -162,15 +218,11 @@ func runPhotoBackfillJob(cfg Config) error {
 	if cfg.ImageBucket == "" {
 		return errors.New("IMAGE_BUCKET is required")
 	}
-	if !cfg.EnableImageVector || !cfg.EnableImageLabel {
+	if opts.Fields != "phash" && (!cfg.EnableImageVector || !cfg.EnableImageLabel) {
 		return errors.New("photo job requires ENABLE_IMAGE_VECTOR and ENABLE_IMAGE_LABEL")
 	}
-	var acquired bool
-	if err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(62130923, 2)`).Scan(&acquired); err != nil {
+	if err = lockPhotoJob(ctx, conn, opts); err != nil {
 		return err
-	}
-	if !acquired {
-		return errors.New("another photo backfill execution is running")
 	}
 	// Closing this dedicated connection releases the session lock, including on SIGTERM.
 	client, err := storage.NewClient(ctx)
@@ -190,7 +242,7 @@ func runPhotoBackfillJob(cfg Config) error {
 	processed, failed := 0, 0
 	for processed < opts.MaxItems && time.Now().Add(310*time.Second).Before(stopAt) && ctx.Err() == nil {
 		limit := min(opts.BatchSize, opts.MaxItems-processed)
-		rows, err := conn.QueryContext(ctx, photoJobSelect, cursor, opts.EndID, limit, opts.CreatedFrom, opts.CreatedBefore)
+		rows, err := conn.QueryContext(ctx, photoJobSelect, photoJobQueryArgs(opts, cursor, limit)...)
 		if err != nil {
 			return fmt.Errorf("list photo candidates: %w", err)
 		}
@@ -226,7 +278,7 @@ func runPhotoBackfillJob(cfg Config) error {
 			}
 		}
 	}
-	log.Printf("photo_backfill summary processed=%d succeeded=%d failed=%d next_cursor=%d end_id=%d", processed, processed-failed, failed, cursor, opts.EndID)
+	log.Printf("photo_backfill summary fields=%s shard=%d/%d processed=%d succeeded=%d failed=%d next_cursor=%d end_id=%d", opts.Fields, opts.ShardIndex, opts.ShardCount, processed, processed-failed, failed, cursor, opts.EndID)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -280,7 +332,7 @@ func photoJobPreflight(ctx context.Context, conn *sql.Conn, opts photoJobOptions
 	}
 	var sample int
 	if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM ("+photoJobSelect+") p",
-		opts.StartID, opts.EndID, 1000, opts.CreatedFrom, opts.CreatedBefore).Scan(&sample); err != nil {
+		photoJobQueryArgs(opts, opts.StartID, 1000)...).Scan(&sample); err != nil {
 		return err
 	}
 	log.Printf("photo_backfill preflight mode=%s schema=ready missing_sample_up_to_1000=%d created_from=%v created_before=%v", opts.Mode, sample, opts.CreatedFrom, opts.CreatedBefore)

@@ -79,7 +79,7 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 	if err = conn.QueryRowContext(ctx, `SELECT phash FROM "Photo" WHERE id=1`).Scan(&hash); err != nil || hash != "" {
 		t.Fatalf("stale source was written: hash=%s err=%v", hash, err)
 	}
-	rows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, nil, nil)
+	rows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, nil, nil, "all", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 	}
 	from, _ := time.Parse(time.RFC3339, "2025-12-31T16:00:00Z")
 	before, _ := time.Parse(time.RFC3339, "2026-12-31T16:00:00Z")
-	dateRows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, from, before)
+	dateRows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, from, before, "all", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +116,57 @@ func TestPhotoJobRealPostgres(t *testing.T) {
 	}
 	if len(ids) != 2 || ids[0] != 3 || ids[1] != 4 {
 		t.Fatalf("date bounds included other years or unknown dates: %v", ids)
+	}
+
+	dateRows.Close()
+	seen := map[int64]bool{}
+	for shard := 0; shard < 8; shard++ {
+		rows, err := conn.QueryContext(ctx, photoJobSelect, 0, 10, 25, nil, nil, "phash", shard, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var item photoJobItem
+			if err := rows.Scan(&item.ID, &item.FileID, &item.Extension, &item.NeedHash, &item.NeedVector, &item.NeedLabels); err != nil {
+				t.Fatal(err)
+			}
+			if seen[item.ID] || !item.NeedHash || item.NeedVector || item.NeedLabels {
+				t.Fatalf("invalid shard item: %+v", item)
+			}
+			seen[item.ID] = true
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+	}
+	if len(seen) != 5 {
+		t.Fatalf("shards omitted photos: %v", seen)
+	}
+	if err := lockPhotoJob(ctx, conn, photoJobOptions{Fields: "phash", ShardIndex: 0}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if err := lockPhotoJob(ctx, other, photoJobOptions{Fields: "phash", ShardIndex: 1}); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer duplicate.Close()
+	if err := lockPhotoJob(ctx, duplicate, photoJobOptions{Fields: "phash", ShardIndex: 0}); err == nil {
+		t.Fatal("duplicate shard lock accepted")
+	}
+	if err := lockPhotoJob(ctx, duplicate, photoJobOptions{Fields: "ai"}); err != nil {
+		t.Fatalf("independent AI fields blocked: %v", err)
+	}
+	if err := lockPhotoJob(ctx, duplicate, photoJobOptions{Fields: "all"}); err == nil {
+		t.Fatal("all-fields job overlapped active pHash shards")
 	}
 
 }

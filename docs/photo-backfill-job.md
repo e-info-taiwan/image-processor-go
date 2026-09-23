@@ -62,3 +62,25 @@ to 25,200 (7 hours), with Cloud Run `--task-timeout=8h`. Defaults stay at 50
 items / 3,000 seconds. A longer Job keeps the same single worker, retry caps,
 advisory lock, per-item deadline, and incremental writes. The task timeout
 must always exceed the application time budget.
+
+## 2026-09-23 component-specific executions
+
+`BACKFILL_FIELDS=ai` selects only missing vectors and label suggestions; it never
+writes pHash. The production AI job limits `createdAt` to 2026 in Asia/Taipei.
+
+`BACKFILL_FIELDS=phash` selects only empty pHash values and requires exactly eight
+Cloud Run tasks. Each task owns `Photo.id % 8 = CLOUD_RUN_TASK_INDEX`; fixed
+sharding and per-shard advisory locks prevent overlapping executions. pHash does
+not start CLIP or call Vision (`ENABLE_IMAGE_VECTOR=false`,
+`ENABLE_IMAGE_LABEL=false`). Set no date bounds to cover the full gallery.
+
+pHash shards share lock `(62130923,3)` and exclusively own
+`(62130924, task index)`. AI/import own `(62130923,2)`, so independent fields can
+run together. All-fields mode owns both global locks exclusively.
+
+For a whole-gallery pHash execution use `BACKFILL_MAX_ITEMS=200000`,
+`BACKFILL_MAX_SECONDS=84600`, and a 24-hour task timeout. Each successful field
+is persisted immediately; source identity and empty-field guards preserve
+concurrent edits. Failures are logged by photo ID and make the task fail after
+other eligible photos have been attempted. Completion must be checked against
+remaining eligible rows; a successful bounded process alone is not sufficient.

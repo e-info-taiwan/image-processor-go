@@ -146,3 +146,24 @@ func TestPhotoJobDateBounds(t *testing.T) {
 		t.Fatal("timezone-free date accepted")
 	}
 }
+
+func TestPhotoJobPHashShardsRequireFixedEightTasks(t *testing.T) {
+	t.Setenv("BACKFILL_FIELDS", "phash")
+	if _, err := loadPhotoJobOptions(); err == nil {
+		t.Fatal("missing shard count accepted")
+	}
+	t.Setenv("CLOUD_RUN_TASK_COUNT", "8")
+	t.Setenv("CLOUD_RUN_TASK_INDEX", "7")
+	opts, err := loadPhotoJobOptions()
+	if err != nil || opts.ShardIndex != 7 || opts.ShardCount != 8 || opts.Fields != "phash" {
+		t.Fatalf("%+v %v", opts, err)
+	}
+	t.Setenv("CLOUD_RUN_TASK_INDEX", "8")
+	if _, err := loadPhotoJobOptions(); err == nil {
+		t.Fatal("invalid shard index accepted")
+	}
+	t.Setenv("BACKFILL_FIELDS", "ai")
+	if _, err := loadPhotoJobOptions(); err == nil {
+		t.Fatal("sharding accepted for AI fields")
+	}
+}
